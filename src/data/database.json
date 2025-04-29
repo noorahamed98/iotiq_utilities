@@ -1,0 +1,47 @@
+{
+  "users": [
+    {
+      "user_name": "ravi",
+      "mobile_number": "6304718795",
+      "country_code": "+91",
+      "mail": "xyz@gmail.com",
+      "location": "madhapur",
+      "spaces": [
+        {
+          "space_name": "home",
+          "devices": []
+        }
+      ],
+      "otps": [
+        {
+          "otp": "562199",
+          "created_at": "2025-04-29T07:50:07.354Z",
+          "is_verified": true
+        },
+        {
+          "otp": "547825",
+          "created_at": "2025-04-29T07:52:43.677Z",
+          "is_verified": false
+        },
+        {
+          "otp": "893715",
+          "created_at": "2025-04-29T07:54:35.544Z",
+          "is_verified": true
+        }
+      ]
+    },
+    {
+      "user_name": "kart",
+      "mobile_number": "9247872692",
+      "country_code": "+91",
+      "mail": "",
+      "location": "durgam Cheruvu",
+      "spaces": [
+        {
+          "space_name": "home",
+          "devices": []
+        }
+      ]
+    }
+  ]
+}

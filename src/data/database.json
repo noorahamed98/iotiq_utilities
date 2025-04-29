@@ -1,14 +1,15 @@
 {
   "users": [
     {
-      "user_name": "ravi",
+      "user_name": "Chaitanya",
       "mobile_number": "6304718795",
       "country_code": "+91",
       "mail": "xyz@gmail.com",
-      "location": "madhapur",
+      "location": "Madhapur",
       "spaces": [
         {
           "space_name": "home",
+          "address": "",
           "devices": []
         }
       ],
@@ -19,20 +20,59 @@
       }
     },
     {
-      "user_name": "kart",
+      "user_name": "Ravi Kumar",
       "mobile_number": "9247872691",
       "country_code": "+91",
       "mail": "",
-      "location": "durgam Cheruvu",
+      "location": "Nizampet",
       "spaces": [
         {
           "space_name": "home",
+          "address": "",
           "devices": []
         }
       ],
       "otp_record": {
-        "otp": "547712",
-        "created_at": "2025-04-29T11:18:52.229Z",
+        "otp": "394025",
+        "created_at": "2025-04-29T12:27:44.478Z",
+        "is_verified": true
+      }
+    },
+    {
+      "user_name": "Varun",
+      "mobile_number": "9014060589",
+      "country_code": "+91",
+      "mail": "",
+      "location": "Nizampet",
+      "spaces": [
+        {
+          "space_name": "home",
+          "address": "",
+          "devices": []
+        }
+      ],
+      "otp_record": {
+        "otp": "394025",
+        "created_at": "2025-04-29T12:27:44.478Z",
+        "is_verified": true
+      }
+    },
+    {
+      "user_name": "Kalyan",
+      "mobile_number": "7673978727",
+      "country_code": "+91",
+      "mail": "",
+      "location": "Nizampet",
+      "spaces": [
+        {
+          "space_name": "home",
+          "address": "",
+          "devices": []
+        }
+      ],
+      "otp_record": {
+        "otp": "394025",
+        "created_at": "2025-04-29T12:27:44.478Z",
         "is_verified": true
       }
     }

@@ -1,14 +1,218 @@
-import { findByMobileNumber, updateUser } from "../models/userModel.js";
+import { findByMobileNumber, updateUser, create } from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import dotenv from "dotenv";
+import { v4 as uuidv4 } from "uuid";
 dotenv.config();
 
-// Secret for JWT
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+// JWT configuration
+const ACCESS_TOKEN_SECRET =
+  process.env.ACCESS_TOKEN_SECRET ||
+  process.env.JWT_SECRET ||
+  "your-secret-key";
+const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || "15m";
+const REFRESH_TOKEN_SECRET =
+  process.env.REFRESH_TOKEN_SECRET || "your-refresh-secret-key";
+const REFRESH_TOKEN_EXPIRY = process.env.REFRESH_TOKEN_EXPIRY || "7d";
+
 // WhatsApp API credentials
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "";
 const ACCESS_TOKEN = process.env.WHATSAPP_TOKEN || "";
+
+/**
+ * Generate access token
+ * @param {Object} user - User object
+ * @returns {String} JWT token
+ */
+export function generateAccessToken(user) {
+  return jwt.sign(
+    {
+      mobile: user.mobile_number,
+      user_id: user.id || user._id || user.mobile_number,
+      jti: uuidv4(), // Add unique token ID
+    },
+    ACCESS_TOKEN_SECRET,
+    {
+      expiresIn: ACCESS_TOKEN_EXPIRY,
+    }
+  );
+}
+
+/**
+ * Generate refresh token
+ * @param {Object} user - User object
+ * @returns {String} JWT refresh token
+ */
+export function generateRefreshToken(user) {
+  return jwt.sign(
+    {
+      mobile: user.mobile_number,
+      user_id: user.id || user._id || user.mobile_number,
+      jti: uuidv4(), // Add unique token ID
+    },
+    REFRESH_TOKEN_SECRET,
+    {
+      expiresIn: REFRESH_TOKEN_EXPIRY,
+    }
+  );
+}
+
+/**
+ * Generate both access and refresh tokens
+ * @param {Object} user - User object
+ * @returns {Object} Object containing both tokens and their expiry times
+ */
+export function generateTokens(user) {
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  // Calculate expiry timestamps
+  const accessTokenExpiry = new Date();
+  const accessTokenDuration = ACCESS_TOKEN_EXPIRY.match(/(\d+)([smhd])/);
+  const refreshTokenDuration = REFRESH_TOKEN_EXPIRY.match(/(\d+)([smhd])/);
+
+  // Parse expiry duration
+  if (accessTokenDuration) {
+    const [, value, unit] = accessTokenDuration;
+    const multiplier =
+      unit === "s"
+        ? 1
+        : unit === "m"
+        ? 60
+        : unit === "h"
+        ? 3600
+        : unit === "d"
+        ? 86400
+        : 0;
+    accessTokenExpiry.setSeconds(
+      accessTokenExpiry.getSeconds() + parseInt(value) * multiplier
+    );
+  } else {
+    // Default 15 minutes if format isn't recognized
+    accessTokenExpiry.setMinutes(accessTokenExpiry.getMinutes() + 15);
+  }
+
+  const refreshTokenExpiry = new Date();
+  if (refreshTokenDuration) {
+    const [, value, unit] = refreshTokenDuration;
+    const multiplier =
+      unit === "s"
+        ? 1
+        : unit === "m"
+        ? 60
+        : unit === "h"
+        ? 3600
+        : unit === "d"
+        ? 86400
+        : 0;
+    refreshTokenExpiry.setSeconds(
+      refreshTokenExpiry.getSeconds() + parseInt(value) * multiplier
+    );
+  } else {
+    // Default 7 days if format isn't recognized
+    refreshTokenExpiry.setDate(refreshTokenExpiry.getDate() + 7);
+  }
+
+  return {
+    accessToken,
+    refreshToken,
+    accessTokenExpiry,
+    refreshTokenExpiry,
+  };
+}
+
+/**
+ * Verify a JWT access token
+ * @param {String} token - Token to verify
+ * @returns {Promise} Promise that resolves with decoded payload or rejects with error
+ */
+export function verifyAccessToken(token) {
+  return new Promise((resolve, reject) => {
+    jwt.verify(token, ACCESS_TOKEN_SECRET, (err, decoded) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(decoded);
+    });
+  });
+}
+
+/**
+ * Verify a JWT refresh token
+ * @param {String} token - Refresh token to verify
+ * @returns {Promise} Promise that resolves with decoded payload or rejects with error
+ */
+export function verifyRefreshToken(token) {
+  return new Promise((resolve, reject) => {
+    jwt.verify(token, REFRESH_TOKEN_SECRET, (err, decoded) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      // Check if token is blacklisted (implement this if needed)
+      // const isBlacklisted = checkIfTokenIsBlacklisted(token);
+      // if (isBlacklisted) {
+      //   reject(new Error('Token has been revoked'));
+      //   return;
+      // }
+
+      resolve(decoded);
+    });
+  });
+}
+
+/**
+ * Refresh an access token using a valid refresh token
+ * @param {String} refreshToken - Valid refresh token
+ * @returns {Promise} Promise resolving to new access token data
+ */
+export async function refreshAccessToken(refreshToken) {
+  try {
+    // Verify the refresh token
+    const decoded = await verifyRefreshToken(refreshToken);
+
+    // Get the user from database
+    const user = findByMobileNumber(decoded.mobile);
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Generate new access token
+    const accessToken = generateAccessToken(user);
+
+    // Calculate expiry timestamp
+    const accessTokenExpiry = new Date();
+    const accessTokenDuration = ACCESS_TOKEN_EXPIRY.match(/(\d+)([smhd])/);
+    if (accessTokenDuration) {
+      const [, value, unit] = accessTokenDuration;
+      const multiplier =
+        unit === "s"
+          ? 1
+          : unit === "m"
+          ? 60
+          : unit === "h"
+          ? 3600
+          : unit === "d"
+          ? 86400
+          : 0;
+      accessTokenExpiry.setSeconds(
+        accessTokenExpiry.getSeconds() + parseInt(value) * multiplier
+      );
+    } else {
+      accessTokenExpiry.setMinutes(accessTokenExpiry.getMinutes() + 15); // Default
+    }
+
+    return {
+      accessToken,
+      accessTokenExpiry,
+    };
+  } catch (error) {
+    throw error;
+  }
+}
 
 // Generate a 6-digit OTP
 function generateOTP() {
@@ -193,30 +397,24 @@ export function verifyOTP(mobileNumber, otpToVerify) {
   user.otp_record.is_verified = true;
   updateUser(user);
 
-  // Generate JWT token
-  const token = jwt.sign(
-    {
-      mobile: mobileNumber,
-      user_id: user.id || user._id || mobileNumber, // Fallback to mobile if no ID
-    },
-    JWT_SECRET,
-    {
-      expiresIn: "7d",
-    }
-  );
+  // Generate tokens (both access and refresh tokens)
+  const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
+    generateTokens(user);
 
-  // Return user and token
+  // Return user and tokens
   return {
     success: true,
     message: "Sign in successful",
     user: {
       user_name: user.user_name,
       mobile_number: user.mobile_number,
-      country_code: user.country_code,
-      mail: user.mail,
-      location: user.location,
     },
-    token,
+    tokens: {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry,
+      refreshTokenExpiry,
+    },
   };
 }
 
@@ -225,15 +423,45 @@ export function signUp(userData) {
   // Create the user
   const newUser = create(userData);
 
-  // Generate a token
-  const token = jwt.sign({ mobile: newUser.mobile_number }, JWT_SECRET, {
-    expiresIn: "7d",
-  });
+  // Generate tokens (both access and refresh tokens)
+  const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
+    generateTokens(newUser);
 
-  // Return user and token
+  // Return user and tokens
   return {
     success: true,
     user: newUser,
-    token,
+    tokens: {
+      accessToken,
+      refreshToken,
+      accessTokenExpiry,
+      refreshTokenExpiry,
+    },
   };
+}
+
+/**
+ * Invalidate a refresh token (for logout or security purposes)
+ * @param {String} token - Refresh token to invalidate
+ * @returns {Boolean} Success status
+ */
+export function invalidateToken(token) {
+  // Implementation depends on your storage strategy
+  // Here's a simple implementation that could be expanded
+
+  // Option 1: Store in memory (not persistent, only for development)
+  // global.tokenBlacklist = global.tokenBlacklist || [];
+  // global.tokenBlacklist.push({
+  //   token,
+  //   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+  // });
+
+  // Option 2: Store in database (you would implement this)
+  // await db.refreshTokenBlacklist.create({
+  //   token,
+  //   blacklistedAt: new Date(),
+  //   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+  // });
+
+  return true;
 }

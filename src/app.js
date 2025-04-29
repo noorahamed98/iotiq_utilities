@@ -2,8 +2,11 @@
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import cookieParser from "cookie-parser";
+import cors from "cors";
 
 import authRoutes from "./routes/authRoutes.js";
+import protectedRoutes from "./routes/protectedRoutes.js";
 import { errorHandler } from "./middlewares/errorMiddleware.js";
 import logRequests from "./middlewares/loggerMiddleware.js";
 
@@ -13,8 +16,20 @@ const app = express();
 // Security headers
 app.use(helmet());
 app.set("trust proxy", 1);
+
+// CORS configuration
+app.use(
+  cors({
+    origin: process.env.ALLOWED_ORIGINS?.split(",") || "http://localhost:5000",
+    credentials: true, // Allow cookies to be sent with requests
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 // Request parsing
 app.use(express.json());
+app.use(cookieParser()); // Add cookie parser middleware
 app.use(logRequests);
 
 // Rate limiting
@@ -28,6 +43,8 @@ app.use("/", apiLimiter);
 
 // Routes
 app.use("/", authRoutes);
+
+app.use("/", protectedRoutes);
 
 // Error handling middleware (must be after routes)
 app.use(errorHandler);

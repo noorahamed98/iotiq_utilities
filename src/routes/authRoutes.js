@@ -8,8 +8,8 @@ import {
 
 const router = express.Router();
 
-router.post("/signIn", signinInitiate);
-router.post("/signIn/otp", signinVerifyOTP);
+router.post("/signin", signinInitiate);
+router.post("/signin/otp", signinVerifyOTP);
 router.post("/signup", signup);
 
 export default router;

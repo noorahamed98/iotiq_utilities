@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 
 import authRoutes from "./routes/authRoutes.js";
 import { errorHandler } from "./middlewares/errorMiddleware.js";
+import logRequests from "./middlewares/loggerMiddleware.js";
 
 // Initialize express
 const app = express();
@@ -14,6 +15,7 @@ app.use(helmet());
 app.set("trust proxy", 1);
 // Request parsing
 app.use(express.json());
+app.use(logRequests);
 
 // Rate limiting
 const apiLimiter = rateLimit({

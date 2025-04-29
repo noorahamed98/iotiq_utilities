@@ -17,8 +17,6 @@ function generateOTP() {
 
 // Send OTP via WhatsApp
 async function sendWhatsAppOTP(phoneNumber, otp) {
-  console.log("Function start Called");
-
   try {
     // Check if environment variables are defined
     if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
@@ -76,7 +74,6 @@ async function sendWhatsAppOTP(phoneNumber, otp) {
       timeout: 15000, // 15 seconds
     });
 
-    console.log("Function Response", response.data);
     return response.data;
   } catch (error) {
     console.log("Caught error in WhatsApp API call");
@@ -107,14 +104,13 @@ async function sendWhatsAppOTP(phoneNumber, otp) {
       });
     }
 
-    // Return a structured error instead of throwing to prevent connection reset
     return {
       success: false,
       error: error.message || "Failed to send OTP via WhatsApp",
     };
   }
 }
-// Initiate sign-in process (Step 1)
+
 export async function initiateSignIn(mobileNumber, countryCode = "+91") {
   try {
     // Find the user
@@ -126,7 +122,6 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
     }
 
     // Generate OTP
-    console.log("User Found");
     const otp = generateOTP();
 
     // Store OTP in user's record with timestamp
@@ -137,8 +132,7 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
     };
 
     // Add OTP to user's records
-    user.otps = user.otps || [];
-    user.otps.push(otpRecord);
+    user.otp_record = otpRecord;
 
     // Update user in the database
     updateUser(user);
@@ -177,15 +171,12 @@ export function verifyOTP(mobileNumber, otpToVerify) {
   }
 
   // Check if user has any OTPs
-  if (!user.otps || user.otps.length === 0) {
+  if (!user.otp_record) {
     throw new Error("No OTP found for this user");
   }
 
-  // Get the latest OTP
-  const latestOTP = user.otps[user.otps.length - 1];
-
   // Check if OTP is expired (15 minutes validity)
-  const otpCreatedAt = new Date(latestOTP.created_at);
+  const otpCreatedAt = new Date(user.otp_record.created_at);
   const now = new Date();
   const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
 
@@ -194,12 +185,12 @@ export function verifyOTP(mobileNumber, otpToVerify) {
   }
 
   // Verify OTP
-  if (latestOTP.otp !== otpToVerify) {
+  if (user.otp_record.otp !== otpToVerify) {
     throw new Error("Incorrect OTP");
   }
 
   // Mark OTP as verified
-  latestOTP.is_verified = true;
+  user.otp_record.is_verified = true;
   updateUser(user);
 
   // Generate JWT token

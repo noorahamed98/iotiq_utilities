@@ -6,13 +6,7 @@
       "country_code": "+91",
       "mail": "xyz@gmail.com",
       "location": "Madhapur",
-      "spaces": [
-        {
-          "space_name": "home",
-          "address": "",
-          "devices": []
-        }
-      ],
+      "spaces": [],
       "otp_record": {
         "otp": "562199",
         "created_at": "2025-04-29T07:50:07.354Z",
@@ -27,14 +21,16 @@
       "location": "Nizampet",
       "spaces": [
         {
-          "space_name": "home",
-          "address": "",
-          "devices": []
+          "id": "02143d13-4abe-4e04-a2bc-28544155321e",
+          "space_name": "Office",
+          "address": "123 Business Park, Floor 3",
+          "devices": [],
+          "created_at": "2025-04-30T05:51:19.136Z"
         }
       ],
       "otp_record": {
-        "otp": "394025",
-        "created_at": "2025-04-29T12:27:44.478Z",
+        "otp": "501556",
+        "created_at": "2025-04-30T06:21:30.007Z",
         "is_verified": true
       }
     },
@@ -44,13 +40,7 @@
       "country_code": "+91",
       "mail": "",
       "location": "Nizampet",
-      "spaces": [
-        {
-          "space_name": "home",
-          "address": "",
-          "devices": []
-        }
-      ],
+      "spaces": [],
       "otp_record": {
         "otp": "394025",
         "created_at": "2025-04-29T12:27:44.478Z",
@@ -63,13 +53,7 @@
       "country_code": "+91",
       "mail": "",
       "location": "Nizampet",
-      "spaces": [
-        {
-          "space_name": "home",
-          "address": "",
-          "devices": []
-        }
-      ],
+      "spaces": [],
       "otp_record": {
         "otp": "394025",
         "created_at": "2025-04-29T12:27:44.478Z",

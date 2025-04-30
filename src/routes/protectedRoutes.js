@@ -1,14 +1,11 @@
 // src/routes/protectedRoutes.js
 import express from "express";
 import {
-  homeController,
-  profileController,
-} from "../controllers/homeController.js";
-import {
   verifyAccessToken,
   refreshAccessToken,
   verifyRefreshToken,
 } from "../services/authService.js";
+import * as spaceController from "../controllers/spaceController.js";
 
 const router = express.Router();
 
@@ -116,12 +113,19 @@ const universalAuth = async (req, res, next) => {
   }
 };
 
-// Protected route: /home
-router.get("/home", universalAuth, homeController);
+// Get all spaces for the authenticated user
+router.get("/spaces", universalAuth, spaceController.getAllSpaces);
 
-// Protected route: /profile
-router.get("/profile", universalAuth, profileController);
+// Get a specific space by ID
+router.get("/spaces/:spaceId", universalAuth, spaceController.getSpaceById);
 
-// Add more protected routes as needed...
+// Create a new space
+router.post("/spaces", universalAuth, spaceController.createSpace);
+
+// Update a space
+router.put("/spaces/:spaceId", universalAuth, spaceController.updateSpace);
+
+// Delete a space
+router.delete("/spaces/:spaceId", universalAuth, spaceController.deleteSpace);
 
 export default router;

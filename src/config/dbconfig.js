@@ -21,7 +21,36 @@ const connectDB = async () => {
 // Device Schema
 const deviceSchema = new mongoose.Schema(
   {
-    // Define your device schema properties here
+    device_id: {
+      type: String,
+      required: [true, "Device ID is required"],
+    },
+    device_type: {
+      type: String,
+      required: [true, "Device type is required"],
+      enum: ["base", "tank"], // Restrict to only these values
+    },
+    device_name: {
+      type: String,
+      required: [true, "Device name is required"],
+    },
+    connection_type: {
+      type: String,
+      required: [true, "Connection type is required"],
+      enum: ["wifi", "without_wifi"], // Restrict to only these values
+    },
+    ssid: {
+      type: String,
+      required: function () {
+        return this.connection_type === "wifi";
+      },
+    },
+    password: {
+      type: String,
+      required: function () {
+        return this.connection_type === "wifi";
+      },
+    },
   },
   { timestamps: true }
 );

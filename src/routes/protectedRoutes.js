@@ -6,6 +6,7 @@ import {
   verifyRefreshToken,
 } from "../services/authService.js";
 import * as spaceController from "../controllers/spaceController.js";
+import * as deviceController from "../controllers/deviceController.js";
 
 const router = express.Router();
 
@@ -113,6 +114,8 @@ const universalAuth = async (req, res, next) => {
   }
 };
 
+// Space routes
+// -------------
 // Get all spaces for the authenticated user
 router.get("/spaces", universalAuth, spaceController.getAllSpaces);
 
@@ -127,5 +130,35 @@ router.put("/spaces/:spaceId", universalAuth, spaceController.updateSpace);
 
 // Delete a space
 router.delete("/spaces/:spaceId", universalAuth, spaceController.deleteSpace);
+
+// Device routes
+// -------------
+// Get all devices in a space
+router.get(
+  "/spaces/:spaceId/devices",
+  universalAuth,
+  deviceController.getAllDevices
+);
+
+// Get a specific device in a space
+router.get(
+  "/spaces/:spaceId/devices/:deviceId",
+  universalAuth,
+  deviceController.getDeviceById
+);
+
+// Add a new device to a space
+router.post(
+  "/spaces/:spaceId/devices",
+  universalAuth,
+  deviceController.addDevice
+);
+
+// Delete a device from a space
+router.delete(
+  "/spaces/:spaceId/devices/:deviceId",
+  universalAuth,
+  deviceController.deleteDevice
+);
 
 export default router;

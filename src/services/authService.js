@@ -1,4 +1,4 @@
-import { findByMobileNumber, updateUser, create } from "../models/userModel.js";
+import { connectDB, User, Space, Device } from "../config/dbconfig.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -151,13 +151,6 @@ export function verifyRefreshToken(token) {
         return;
       }
 
-      // Check if token is blacklisted (implement this if needed)
-      // const isBlacklisted = checkIfTokenIsBlacklisted(token);
-      // if (isBlacklisted) {
-      //   reject(new Error('Token has been revoked'));
-      //   return;
-      // }
-
       resolve(decoded);
     });
   });
@@ -174,10 +167,17 @@ export async function refreshAccessToken(refreshToken) {
     const decoded = await verifyRefreshToken(refreshToken);
 
     // Get the user from database
-    const user = findByMobileNumber(decoded.mobile);
+    const user = await User.findOne({ mobile_number: decoded.mobile });
 
     if (!user) {
       throw new Error("User not found");
+    }
+
+    // Check if user is active
+    if (!user.isActive) {
+      throw new Error(
+        "User session has expired or logged out. Please sign in again."
+      );
     }
 
     // Generate new access token
@@ -318,7 +318,7 @@ async function sendWhatsAppOTP(phoneNumber, otp) {
 export async function initiateSignIn(mobileNumber, countryCode = "+91") {
   try {
     // Find the user
-    const user = findByMobileNumber(mobileNumber);
+    const user = await User.findOne({ mobile_number: mobileNumber });
 
     // If user not found
     if (!user) {
@@ -338,8 +338,12 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
     // Add OTP to user's records
     user.otp_record = otpRecord;
 
+    // Keep isActive as false until OTP is verified
+    // This ensures proper session management
+    user.isActive = false;
+
     // Update user in the database
-    updateUser(user);
+    await user.save();
 
     // Format phone number with country code if not already included
     const fullPhoneNumber = mobileNumber.startsWith("+")
@@ -364,104 +368,223 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
   }
 }
 
-// Verify OTP and complete sign-in (Step 2)
-export function verifyOTP(mobileNumber, otpToVerify) {
-  // Find the user
-  const user = findByMobileNumber(mobileNumber);
+export async function verifyOTP(mobileNumber, otpToVerify) {
+  try {
+    // Find the user
+    const user = await User.findOne({ mobile_number: mobileNumber });
 
-  // If user not found
-  if (!user) {
-    throw new Error("User not found");
+    // If user not found
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Check if user has any OTPs
+    if (!user.otp_record) {
+      throw new Error("No OTP found for this user");
+    }
+
+    // Check if OTP is expired (15 minutes validity)
+    const otpCreatedAt = new Date(user.otp_record.created_at);
+    const now = new Date();
+    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
+
+    if (diffInMinutes > 15) {
+      throw new Error("OTP expired");
+    }
+
+    // Verify OTP
+    if (user.otp_record.otp !== otpToVerify) {
+      throw new Error("Incorrect OTP");
+    }
+
+    // Mark OTP as verified and user as active
+    user.otp_record.is_verified = true;
+    user.isActive = true;
+    await user.save();
+
+    // Generate tokens (both access and refresh tokens)
+    const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
+      generateTokens(user);
+
+    // Return user and tokens
+    return {
+      success: true,
+      message: "Sign in successful",
+      user: {
+        user_name: user.user_name,
+        mobile_number: user.mobile_number,
+      },
+      tokens: {
+        accessToken,
+        refreshToken,
+        accessTokenExpiry,
+        refreshTokenExpiry,
+      },
+    };
+  } catch (error) {
+    throw error;
   }
-
-  // Check if user has any OTPs
-  if (!user.otp_record) {
-    throw new Error("No OTP found for this user");
-  }
-
-  // Check if OTP is expired (15 minutes validity)
-  const otpCreatedAt = new Date(user.otp_record.created_at);
-  const now = new Date();
-  const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
-
-  if (diffInMinutes > 15) {
-    throw new Error("OTP expired");
-  }
-
-  // Verify OTP
-  if (user.otp_record.otp !== otpToVerify) {
-    throw new Error("Incorrect OTP");
-  }
-
-  // Mark OTP as verified
-  user.otp_record.is_verified = true;
-  updateUser(user);
-
-  // Generate tokens (both access and refresh tokens)
-  const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
-    generateTokens(user);
-
-  // Return user and tokens
-  return {
-    success: true,
-    message: "Sign in successful",
-    user: {
-      user_name: user.user_name,
-      mobile_number: user.mobile_number,
-    },
-    tokens: {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry,
-      refreshTokenExpiry,
-    },
-  };
-}
-
-// Simple sign up function
-export function signUp(userData) {
-  // Create the user
-  const newUser = create(userData);
-
-  // Generate tokens (both access and refresh tokens)
-  const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
-    generateTokens(newUser);
-
-  // Return user and tokens
-  return {
-    success: true,
-    user: newUser,
-    tokens: {
-      accessToken,
-      refreshToken,
-      accessTokenExpiry,
-      refreshTokenExpiry,
-    },
-  };
 }
 
 /**
- * Invalidate a refresh token (for logout or security purposes)
- * @param {String} token - Refresh token to invalidate
- * @returns {Boolean} Success status
+ * Initiate sign up by sending OTP
+ * @param {String} mobileNumber - User's mobile number
+ * @param {String} userName - User's name
+ * @param {String} countryCode - Country code for phone number
+ * @returns {Promise<Object>} Response object
  */
-export function invalidateToken(token) {
-  // Implementation depends on your storage strategy
-  // Here's a simple implementation that could be expanded
+export async function initiateSignUp(
+  mobileNumber,
+  userName,
+  countryCode = "+91"
+) {
+  try {
+    // Check if user already exists
+    const existingUser = await User.findOne({ mobile_number: mobileNumber });
 
-  // Option 1: Store in memory (not persistent, only for development)
-  // global.tokenBlacklist = global.tokenBlacklist || [];
-  // global.tokenBlacklist.push({
-  //   token,
-  //   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-  // });
+    if (existingUser) {
+      return {
+        success: false,
+        message: "User with this mobile number already exists",
+        code: "USER_EXISTS",
+      };
+    }
 
-  // Option 2: Store in database (you would implement this)
-  // await db.refreshTokenBlacklist.create({
-  //   token,
-  //   blacklistedAt: new Date(),
-  //   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-  // });
+    // Generate OTP
+    const otp = generateOTP();
 
-  return true;
+    // Create temporary user object with OTP (not saved to database yet)
+    const tempUser = {
+      user_name: userName,
+      mobile_number: mobileNumber,
+      otp_record: {
+        otp,
+        created_at: new Date().toISOString(),
+        is_verified: false,
+      },
+      isActive: false,
+    };
+
+    // Store the temporary user data in the database
+    const newUser = await User.create(tempUser);
+
+    // Format phone number with country code if not already included
+    const fullPhoneNumber = mobileNumber.startsWith("+")
+      ? mobileNumber
+      : `${countryCode}${mobileNumber}`;
+
+    // Send OTP via WhatsApp
+    await sendWhatsAppOTP(fullPhoneNumber, otp);
+
+    return {
+      success: true,
+      message: "OTP sent to your WhatsApp number for signup verification",
+      mobile_number: mobileNumber,
+    };
+  } catch (error) {
+    console.error("Signup OTP sending failed:", error);
+    return {
+      success: false,
+      message: "Failed to initiate signup. Please try again later.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    };
+  }
+}
+
+/**
+ * Verify signup OTP and complete registration
+ * @param {String} mobileNumber - User's mobile number
+ * @param {String} otpToVerify - OTP to verify
+ * @returns {Promise<Object>} Response with user and token data
+ */
+export async function verifySignUpOTP(mobileNumber, otpToVerify) {
+  try {
+    // Find the user with pending verification
+    const user = await User.findOne({ mobile_number: mobileNumber });
+
+    // If user not found
+    if (!user) {
+      throw new Error("User not found. Please initiate signup again.");
+    }
+
+    // Check if user has any OTPs
+    if (!user.otp_record) {
+      throw new Error(
+        "No OTP found for this user. Please initiate signup again."
+      );
+    }
+
+    // Check if OTP is expired (15 minutes validity)
+    const otpCreatedAt = new Date(user.otp_record.created_at);
+    const now = new Date();
+    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
+
+    if (diffInMinutes > 15) {
+      throw new Error("OTP expired. Please request a new OTP.");
+    }
+
+    // Verify OTP
+    if (user.otp_record.otp !== otpToVerify) {
+      throw new Error("Incorrect OTP. Please try again.");
+    }
+
+    // Mark OTP as verified and user as active
+    user.otp_record.is_verified = true;
+    user.isActive = true;
+    await user.save();
+
+    // Generate tokens
+    const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
+      generateTokens(user);
+
+    // Return user and tokens
+    return {
+      success: true,
+      message: "Signup successful",
+      user: {
+        user_name: user.user_name,
+        mobile_number: user.mobile_number,
+      },
+      tokens: {
+        accessToken,
+        refreshToken,
+        accessTokenExpiry,
+        refreshTokenExpiry,
+      },
+    };
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Logout user by setting isActive to false
+ * @param {String} mobileNumber - User's mobile number
+ * @returns {Promise<Boolean>} Success status
+ */
+export async function logoutUser(mobileNumber) {
+  try {
+    // Find the user
+    const user = await User.findOne({ mobile_number: mobileNumber });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Set isActive to false
+    user.isActive = false;
+    await user.save();
+
+    return {
+      success: true,
+      message: "User logged out successfully",
+    };
+  } catch (error) {
+    console.error("Logout failed:", error);
+    return {
+      success: false,
+      message: "Failed to logout user",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    };
+  }
 }

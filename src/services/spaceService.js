@@ -1,9 +1,9 @@
-import { findByMobileNumber, updateUser } from "../models/userModel.js";
+import { User } from "../config/dbconfig.js";
 import { v4 as uuidv4 } from "uuid"; // You'll need to install this package
 
 // Get all spaces for a user
-export function getUserSpaces(mobileNumber) {
-  const user = findByMobileNumber(mobileNumber);
+export async function getUserSpaces(mobileNumber) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
@@ -11,8 +11,8 @@ export function getUserSpaces(mobileNumber) {
 }
 
 // Get a specific space by name for a user
-export function getUserSpaceByName(mobileNumber, spaceName) {
-  const user = findByMobileNumber(mobileNumber);
+export async function getUserSpaceByName(mobileNumber, spaceName) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
@@ -26,13 +26,13 @@ export function getUserSpaceByName(mobileNumber, spaceName) {
 }
 
 // Get a specific space by ID for a user
-export function getUserSpaceById(mobileNumber, spaceId) {
-  const user = findByMobileNumber(mobileNumber);
+export async function getUserSpaceById(mobileNumber, spaceId) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
 
-  const space = user.spaces.find((space) => space.id === spaceId);
+  const space = user.spaces.find((space) => space._id.toString() === spaceId);
   if (!space) {
     throw new Error("Space not found");
   }
@@ -41,8 +41,8 @@ export function getUserSpaceById(mobileNumber, spaceId) {
 }
 
 // Create a new space for a user
-export function createSpace(mobileNumber, spaceData) {
-  const user = findByMobileNumber(mobileNumber);
+export async function createSpace(mobileNumber, spaceData) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
@@ -58,36 +58,35 @@ export function createSpace(mobileNumber, spaceData) {
     );
   }
 
-  // Create a new space with a unique ID
+  // Create a new space
   const newSpace = {
-    id: uuidv4(), // Generate a unique ID
     space_name: spaceData.space_name,
     address: spaceData.address || "",
     devices: spaceData.devices || [],
-    created_at: new Date().toISOString(),
+    created_at: new Date(),
   };
 
   // Add space to user's spaces
   user.spaces.push(newSpace);
 
-  // Update user in the database
-  const updated = updateUser(user);
-  if (!updated) {
-    throw new Error("Failed to create space");
-  }
+  // Save the updated user document
+  await user.save();
 
-  return newSpace;
+  // Return the newly created space (now with MongoDB _id)
+  return user.spaces[user.spaces.length - 1];
 }
 
 // Update a space for a user
-export function updateSpace(mobileNumber, spaceId, spaceData) {
-  const user = findByMobileNumber(mobileNumber);
+export async function updateSpace(mobileNumber, spaceId, spaceData) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
 
   // Find the space to update
-  const spaceIndex = user.spaces.findIndex((space) => space.id === spaceId);
+  const spaceIndex = user.spaces.findIndex(
+    (space) => space._id.toString() === spaceId
+  );
   if (spaceIndex === -1) {
     throw new Error("Space not found");
   }
@@ -109,25 +108,28 @@ export function updateSpace(mobileNumber, spaceId, spaceData) {
     }
   }
 
-  // Update the space
-  user.spaces[spaceIndex] = {
-    ...user.spaces[spaceIndex],
-    ...spaceData,
-    updated_at: new Date().toISOString(),
-  };
-
-  // Update user in the database
-  const updated = updateUser(user);
-  if (!updated) {
-    throw new Error("Failed to update space");
+  // Update the space properties
+  if (spaceData.space_name) {
+    user.spaces[spaceIndex].space_name = spaceData.space_name;
   }
+
+  if (spaceData.address !== undefined) {
+    user.spaces[spaceIndex].address = spaceData.address;
+  }
+
+  if (spaceData.devices) {
+    user.spaces[spaceIndex].devices = spaceData.devices;
+  }
+
+  // Save the updated user document
+  await user.save();
 
   return user.spaces[spaceIndex];
 }
 
 // Delete a space for a user
-export function deleteSpace(mobileNumber, spaceId) {
-  const user = findByMobileNumber(mobileNumber);
+export async function deleteSpace(mobileNumber, spaceId) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
     throw new Error("User not found");
   }
@@ -140,7 +142,9 @@ export function deleteSpace(mobileNumber, spaceId) {
   }
 
   // Find the space to delete
-  const spaceIndex = user.spaces.findIndex((space) => space.id === spaceId);
+  const spaceIndex = user.spaces.findIndex(
+    (space) => space._id.toString() === spaceId
+  );
   if (spaceIndex === -1) {
     throw new Error("Space not found");
   }
@@ -148,11 +152,8 @@ export function deleteSpace(mobileNumber, spaceId) {
   // Remove the space
   user.spaces.splice(spaceIndex, 1);
 
-  // Update user in the database
-  const updated = updateUser(user);
-  if (!updated) {
-    throw new Error("Failed to delete space");
-  }
+  // Save the updated user document
+  await user.save();
 
   return { success: true, message: "Space deleted successfully" };
 }

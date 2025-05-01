@@ -1,7 +1,8 @@
 // src/routes/authRoutes.js
 import express from "express";
 import {
-  signup,
+  signupInitiate,
+  signupVerifyOTP,
   signinInitiate,
   signinVerifyOTP,
   refreshToken,
@@ -11,10 +12,13 @@ import { refreshTokenMiddleware } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
-// Authentication endpoints
+// Authentication endpoints - Sign In
 router.post("/signin", signinInitiate);
 router.post("/signin/otp", signinVerifyOTP);
-router.post("/signup", signup);
+
+// Authentication endpoints - Sign Up (new two-step process)
+router.post("/signup", signupInitiate);
+router.post("/signup/otp", signupVerifyOTP);
 
 // Token refresh endpoint
 router.post("/refresh-token", refreshTokenMiddleware, refreshToken);

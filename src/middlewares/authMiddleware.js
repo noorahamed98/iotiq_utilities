@@ -2,7 +2,9 @@
 import {
   verifyAccessToken,
   verifyRefreshToken,
+  refreshAccessToken,
 } from "../services/authService.js";
+import { User } from "../config/dbconfig.js";
 
 /**
  * Middleware to authenticate users via JWT access token
@@ -43,11 +45,23 @@ export function authenticateToken(req, res, next) {
 
     // Verify the token
     verifyAccessToken(token)
-      .then((decoded) => {
+      .then(async (decoded) => {
+        // Verify user is active in the database
+        const user = await User.findOne({ mobile_number: decoded.mobile });
+
+        if (!user || !user.isActive) {
+          return res.status(401).json({
+            success: false,
+            message: "Session expired or logged out. Please login again.",
+            code: "SESSION_EXPIRED",
+          });
+        }
+
         // Set user info in request object
         req.user = {
           mobile_number: decoded.mobile,
           user_id: decoded.user_id,
+          user_name: user.user_name,
         };
         next();
       })
@@ -93,11 +107,23 @@ export function refreshTokenMiddleware(req, res, next) {
 
     // Verify the refresh token
     verifyRefreshToken(refreshToken)
-      .then((decoded) => {
+      .then(async (decoded) => {
+        // Check if user is active
+        const user = await User.findOne({ mobile_number: decoded.mobile });
+
+        if (!user || !user.isActive) {
+          return res.status(401).json({
+            success: false,
+            message: "Session expired or logged out. Please login again.",
+            code: "SESSION_EXPIRED",
+          });
+        }
+
         // Set user info in request object
         req.user = {
           mobile_number: decoded.mobile,
           user_id: decoded.user_id,
+          user_name: user.user_name,
         };
 
         // Attach the verified refresh token to the request for the controller
@@ -158,11 +184,19 @@ export function autoRefreshMiddleware(req, res, next) {
 
     // Check the access token
     verifyAccessToken(token)
-      .then((decoded) => {
-        // Access token is valid, set user and continue
+      .then(async (decoded) => {
+        // Verify user is active
+        const user = await User.findOne({ mobile_number: decoded.mobile });
+
+        if (!user || !user.isActive) {
+          return next(); // Let the route handler decide what to do
+        }
+
+        // Access token is valid and user is active, set user and continue
         req.user = {
           mobile_number: decoded.mobile,
           user_id: decoded.user_id,
+          user_name: user.user_name,
         };
         next();
       })
@@ -173,7 +207,14 @@ export function autoRefreshMiddleware(req, res, next) {
             // Verify refresh token first
             const decoded = await verifyRefreshToken(refreshToken);
 
-            // If valid, get a new access token from the service
+            // Check if user is active
+            const user = await User.findOne({ mobile_number: decoded.mobile });
+
+            if (!user || !user.isActive) {
+              return next(); // Let the route handler decide what to do
+            }
+
+            // If valid and user is active, get a new access token from the service
             const { accessToken: newAccessToken, accessTokenExpiry } =
               await refreshAccessToken(refreshToken);
 
@@ -190,6 +231,7 @@ export function autoRefreshMiddleware(req, res, next) {
             req.user = {
               mobile_number: decoded.mobile,
               user_id: decoded.user_id,
+              user_name: user.user_name,
             };
             next();
           } catch (refreshError) {

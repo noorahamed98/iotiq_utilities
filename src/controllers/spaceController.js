@@ -1,11 +1,11 @@
 import * as spaceService from "../services/spaceService.js";
 
-export const getAllSpaces = (req, res) => {
+export const getAllSpaces = async (req, res) => {
   try {
-    // The mobile number should be set by the universalAuth middleware
+    // The mobile number should be set by the auth middleware
     const { mobile_number } = req.user;
 
-    const spaces = spaceService.getUserSpaces(mobile_number);
+    const spaces = await spaceService.getUserSpaces(mobile_number);
 
     return res.status(200).json({
       success: true,
@@ -20,7 +20,7 @@ export const getAllSpaces = (req, res) => {
 };
 
 // Get a specific space by ID
-export const getSpaceById = (req, res) => {
+export const getSpaceById = async (req, res) => {
   try {
     const { mobile_number } = req.user;
     const { spaceId } = req.params;
@@ -32,7 +32,7 @@ export const getSpaceById = (req, res) => {
       });
     }
 
-    const space = spaceService.getUserSpaceById(mobile_number, spaceId);
+    const space = await spaceService.getUserSpaceById(mobile_number, spaceId);
 
     return res.status(200).json({
       success: true,
@@ -52,11 +52,12 @@ export const getSpaceById = (req, res) => {
 };
 
 // Create a new space
-export const createSpace = (req, res) => {
+export const createSpace = async (req, res) => {
   try {
     const { mobile_number } = req.user;
     const spaceData = req.body;
     console.log("Mobile Number:", mobile_number);
+
     // Validate required fields
     if (!spaceData.space_name) {
       return res.status(400).json({
@@ -65,7 +66,7 @@ export const createSpace = (req, res) => {
       });
     }
 
-    const newSpace = spaceService.createSpace(mobile_number, spaceData);
+    const newSpace = await spaceService.createSpace(mobile_number, spaceData);
 
     return res.status(201).json({
       success: true,
@@ -86,7 +87,7 @@ export const createSpace = (req, res) => {
 };
 
 // Update an existing space
-export const updateSpace = (req, res) => {
+export const updateSpace = async (req, res) => {
   try {
     const { mobile_number } = req.user;
     const { spaceId } = req.params;
@@ -99,7 +100,7 @@ export const updateSpace = (req, res) => {
       });
     }
 
-    const updatedSpace = spaceService.updateSpace(
+    const updatedSpace = await spaceService.updateSpace(
       mobile_number,
       spaceId,
       spaceData
@@ -131,7 +132,7 @@ export const updateSpace = (req, res) => {
 };
 
 // Delete a space
-export const deleteSpace = (req, res) => {
+export const deleteSpace = async (req, res) => {
   try {
     const { mobile_number } = req.user;
     const { spaceId } = req.params;
@@ -143,7 +144,7 @@ export const deleteSpace = (req, res) => {
       });
     }
 
-    const result = spaceService.deleteSpace(mobile_number, spaceId);
+    const result = await spaceService.deleteSpace(mobile_number, spaceId);
 
     return res.status(200).json({
       success: true,

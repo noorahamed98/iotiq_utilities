@@ -1,10 +1,11 @@
 // src/controllers/authController.js
 import {
-  signUp,
+  initiateSignUp,
+  verifySignUpOTP,
   initiateSignIn,
   verifyOTP,
   refreshAccessToken,
-  invalidateToken,
+  logoutUser,
 } from "../services/authService.js";
 
 // Part 1: Initiate sign-in and send OTP via WhatsApp
@@ -46,7 +47,7 @@ export async function signinInitiate(req, res) {
 }
 
 // Part 2: Verify OTP and complete sign-in
-export function signinVerifyOTP(req, res) {
+export async function signinVerifyOTP(req, res) {
   try {
     const { mobile_number, otp } = req.body;
 
@@ -62,7 +63,7 @@ export function signinVerifyOTP(req, res) {
         .json({ success: false, message: "OTP is required" });
     }
 
-    const result = verifyOTP(mobile_number, otp);
+    const result = await verifyOTP(mobile_number, otp);
 
     // Set cookies for both tokens if verification successful
     if (result.success && result.tokens) {
@@ -131,10 +132,10 @@ export function signinVerifyOTP(req, res) {
   }
 }
 
-// Handle sign up request
-export function signup(req, res) {
+// Step 1: Initiate sign up and send OTP
+export async function signupInitiate(req, res) {
   try {
-    const { user_name, mobile_number, location } = req.body;
+    const { user_name, mobile_number, country_code } = req.body;
 
     if (!user_name || !mobile_number) {
       return res.status(400).json({
@@ -143,9 +144,45 @@ export function signup(req, res) {
       });
     }
 
-    const result = signUp({ user_name, mobile_number, location });
+    const result = await initiateSignUp(
+      mobile_number,
+      user_name,
+      country_code || "+91"
+    );
 
-    // Set token cookies if signup successful
+    if (result.code === "USER_EXISTS") {
+      return res.status(409).json(result);
+    }
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Signup initiation error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
+  }
+}
+
+// Step 2: Verify signup OTP and complete registration
+export async function signupVerifyOTP(req, res) {
+  try {
+    const { mobile_number, otp } = req.body;
+
+    if (!mobile_number) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Mobile number is required" });
+    }
+
+    if (!otp) {
+      return res
+        .status(400)
+        .json({ success: false, message: "OTP is required" });
+    }
+
+    const result = await verifySignUpOTP(mobile_number, otp);
+
+    // Set cookies for both tokens if verification successful
     if (result.success && result.tokens) {
       const {
         accessToken,
@@ -173,11 +210,39 @@ export function signup(req, res) {
 
     return res.status(201).json(result);
   } catch (error) {
-    if (error.message === "User already exists") {
-      return res.status(409).json({ success: false, message: error.message });
+    if (error.message?.includes("User not found")) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please initiate signup again.",
+        code: "USER_NOT_FOUND",
+      });
     }
 
-    console.error("Signup error:", error);
+    if (error.message?.includes("No OTP found")) {
+      return res.status(400).json({
+        success: false,
+        message: "Please request an OTP first",
+        code: "NO_OTP_FOUND",
+      });
+    }
+
+    if (error.message?.includes("OTP expired")) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired. Please request a new one",
+        code: "OTP_EXPIRED",
+      });
+    }
+
+    if (error.message?.includes("Incorrect OTP")) {
+      return res.status(400).json({
+        success: false,
+        message: "Incorrect OTP. Please try again",
+        code: "INCORRECT_OTP",
+      });
+    }
+
+    console.error("Signup OTP verification error:", error);
     return res
       .status(500)
       .json({ success: false, message: "Internal server error" });
@@ -242,6 +307,15 @@ export async function refreshToken(req, res) {
       });
     }
 
+    if (error.message?.includes("User session has expired")) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Your session has expired or you have been logged out. Please sign in again.",
+        code: "SESSION_EXPIRED",
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: "Failed to refresh token",
@@ -255,17 +329,27 @@ export async function refreshToken(req, res) {
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  */
-export function logout(req, res) {
+export async function logout(req, res) {
   try {
-    // Get refresh token from cookie or request body
-    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    // Get user's mobile number from token or request body
+    const mobileNumber = req.user?.mobile || req.body.mobile_number;
 
-    // Invalidate the refresh token if one was provided
-    if (refreshToken) {
-      invalidateToken(refreshToken);
+    if (!mobileNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "Mobile number is required for logout",
+        code: "MOBILE_NUMBER_REQUIRED",
+      });
     }
 
-    // Clear cookies regardless
+    // Log the user out by setting isActive to false
+    const result = await logoutUser(mobileNumber);
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    // Clear cookies
     res.clearCookie("accessToken");
     res.clearCookie("refreshToken", { path: "/refresh-token" });
 

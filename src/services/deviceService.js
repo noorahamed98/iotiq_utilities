@@ -15,6 +15,37 @@ export async function getSpaceDevices(mobileNumber, spaceId) {
   return space.devices || [];
 }
 
+// Add to deviceService.js
+export async function getAllUserDevices(mobileNumber, userId) {
+  // Verify that the mobile number matches the requested userId for security
+  const user = await User.findOne({
+    mobile_number: mobileNumber,
+    _id: userId,
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  // Collect devices from all spaces
+  const allDevices = [];
+
+  user.spaces.forEach((space) => {
+    if (space.devices && space.devices.length > 0) {
+      // Add space information to each device
+      const devicesWithSpaceInfo = space.devices.map((device) => ({
+        ...device.toObject(),
+        space_id: space._id,
+        space_name: space.space_name,
+      }));
+
+      allDevices.push(...devicesWithSpaceInfo);
+    }
+  });
+
+  return allDevices;
+}
+
 // Get a specific device in a space
 export async function getDeviceById(mobileNumber, spaceId, deviceId) {
   const user = await User.findOne({ mobile_number: mobileNumber });

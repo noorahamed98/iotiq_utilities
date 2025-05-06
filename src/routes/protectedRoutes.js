@@ -147,6 +147,13 @@ router.get(
   deviceController.getDeviceById
 );
 
+// Get all devices for a user across all spaces
+router.get(
+  "/users/:userId/devices",
+  universalAuth,
+  deviceController.getAllUserDevices
+);
+
 // Add a new device to a space
 router.post(
   "/spaces/:spaceId/devices",

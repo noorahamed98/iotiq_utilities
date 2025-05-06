@@ -36,6 +36,43 @@ export const getAllDevices = async (req, res) => {
   }
 };
 
+// Add to deviceController.js
+export const getAllUserDevices = async (req, res) => {
+  try {
+    const { mobile_number, user_id } = req.user;
+    const { userId } = req.params;
+
+    // Security check - ensure the authenticated user is only accessing their own devices
+    if (userId !== user_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only access your own devices.",
+      });
+    }
+
+    const devices = await deviceService.getAllUserDevices(
+      mobile_number,
+      userId
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: devices,
+    });
+  } catch (error) {
+    // Determine appropriate status code based on error
+    let statusCode = 500;
+    if (error.message === "User not found") {
+      statusCode = 404;
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || "Failed to retrieve devices",
+    });
+  }
+};
+
 // Get a specific device by ID
 export const getDeviceById = async (req, res) => {
   try {

@@ -6,6 +6,8 @@ import {
   verifyOTP,
   refreshAccessToken,
   logoutUser,
+  resendSignInOTP,
+  resendSignUpOTP,
 } from "../services/authService.js";
 
 // Part 1: Initiate sign-in and send OTP via WhatsApp
@@ -108,7 +110,7 @@ export async function signinVerifyOTP(req, res) {
       });
     }
 
-    if (error.message === "OTP expired") {
+    if (error.message?.includes("OTP expired")) {
       return res.status(400).json({
         success: false,
         message: "OTP has expired. Please request a new one",
@@ -124,7 +126,48 @@ export async function signinVerifyOTP(req, res) {
       });
     }
 
+    if (error.message?.includes("OTP already used")) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP already used. Please request a new one",
+        code: "OTP_ALREADY_USED",
+      });
+    }
+
     console.error("OTP verification error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
+  }
+}
+
+/**
+ * Resend OTP for sign in
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export async function signinResendOTP(req, res) {
+  try {
+    const { mobile_number, country_code } = req.body;
+
+    if (!mobile_number) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Mobile number is required" });
+    }
+
+    const result = await resendSignInOTP(mobile_number, country_code || "+91");
+    return res.json(result);
+  } catch (error) {
+    if (error.message === "User not found") {
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please sign up first.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    console.error("Sign-in OTP resend error:", error);
     return res
       .status(500)
       .json({ success: false, message: "Internal server error" });
@@ -241,7 +284,48 @@ export async function signupVerifyOTP(req, res) {
       });
     }
 
+    if (error.message?.includes("OTP already used")) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP already used. Please request a new one",
+        code: "OTP_ALREADY_USED",
+      });
+    }
+
     console.error("Signup OTP verification error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
+  }
+}
+
+/**
+ * Resend OTP for sign up
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export async function signupResendOTP(req, res) {
+  try {
+    const { mobile_number, country_code } = req.body;
+
+    if (!mobile_number) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Mobile number is required" });
+    }
+
+    const result = await resendSignUpOTP(mobile_number, country_code || "+91");
+    return res.json(result);
+  } catch (error) {
+    if (error.message?.includes("User not found")) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please initiate signup again.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    console.error("Signup OTP resend error:", error);
     return res
       .status(500)
       .json({ success: false, message: "Internal server error" });

@@ -1,4 +1,4 @@
-import { connectDB, User, Space, Device } from "../config/dbconfig.js";
+import { User } from "../config/dbconfig.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -383,11 +383,26 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       throw new Error("No OTP found for this user");
     }
 
-    // Check if OTP is expired (15 minutes validity)
+    // Check if OTP is already verified
+    if (user.otp_record.is_verified) {
+      throw new Error("OTP already used. Please request a new OTP.");
+    }
+
+    // Check if OTP is expired (using shorter expiration window - 20 seconds)
     const otpCreatedAt = new Date(user.otp_record.created_at);
     const now = new Date();
-    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
 
+    // Check for 20-second expiration
+    const diffInSeconds = (now - otpCreatedAt) / 1000;
+    if (diffInSeconds > 20) {
+      // Mark OTP as verified but expired to prevent reuse
+      user.otp_record.is_verified = true;
+      await user.save();
+      throw new Error("OTP expired. Please request a new OTP.");
+    }
+
+    // For backward compatibility, also check 15-minute expiration
+    const diffInMinutes = diffInSeconds / 60;
     if (diffInMinutes > 15) {
       throw new Error("OTP expired");
     }
@@ -515,11 +530,26 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
       );
     }
 
-    // Check if OTP is expired (15 minutes validity)
+    // Check if OTP is already verified
+    if (user.otp_record.is_verified) {
+      throw new Error("OTP already used. Please request a new OTP.");
+    }
+
+    // Check if OTP is expired (using shorter expiration window - 20 seconds)
     const otpCreatedAt = new Date(user.otp_record.created_at);
     const now = new Date();
-    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
 
+    // Check for 20-second expiration
+    const diffInSeconds = (now - otpCreatedAt) / 1000;
+    if (diffInSeconds > 20) {
+      // Mark OTP as verified but expired to prevent reuse
+      user.otp_record.is_verified = true;
+      await user.save();
+      throw new Error("OTP expired. Please request a new OTP.");
+    }
+
+    // For backward compatibility, also check 15-minute expiration
+    const diffInMinutes = diffInSeconds / 60;
     if (diffInMinutes > 15) {
       throw new Error("OTP expired. Please request a new OTP.");
     }
@@ -556,6 +586,112 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
     };
   } catch (error) {
     throw error;
+  }
+}
+
+/**
+ * Resend OTP for sign in
+ * @param {String} mobileNumber - User's mobile number
+ * @param {String} countryCode - Country code for phone number (default: +91)
+ * @returns {Promise<Object>} Response object
+ */
+export async function resendSignInOTP(mobileNumber, countryCode = "+91") {
+  try {
+    // Find the user
+    const user = await User.findOne({ mobile_number: mobileNumber });
+
+    // If user not found
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    // Generate new OTP
+    const otp = generateOTP();
+
+    // Store new OTP in user's record with timestamp
+    const otpRecord = {
+      otp,
+      created_at: new Date().toISOString(),
+      is_verified: false,
+    };
+
+    // Update user's OTP record
+    user.otp_record = otpRecord;
+    await user.save();
+
+    // Format phone number with country code if not already included
+    const fullPhoneNumber = mobileNumber.startsWith("+")
+      ? mobileNumber
+      : `${countryCode}${mobileNumber}`;
+
+    // Send OTP via WhatsApp
+    await sendWhatsAppOTP(fullPhoneNumber, otp);
+
+    return {
+      success: true,
+      message: "New OTP sent to your WhatsApp number",
+      mobile_number: mobileNumber,
+    };
+  } catch (error) {
+    console.error("Resend WhatsApp OTP failed:", error);
+    return {
+      success: false,
+      message: "Failed to send OTP to your WhatsApp. Please try again later.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    };
+  }
+}
+
+/**
+ * Resend OTP for sign up
+ * @param {String} mobileNumber - User's mobile number
+ * @param {String} countryCode - Country code for phone number (default: +91)
+ * @returns {Promise<Object>} Response object
+ */
+export async function resendSignUpOTP(mobileNumber, countryCode = "+91") {
+  try {
+    // Find the user with pending verification
+    const user = await User.findOne({ mobile_number: mobileNumber });
+
+    // If user not found
+    if (!user) {
+      throw new Error("User not found. Please initiate signup again.");
+    }
+
+    // Generate new OTP
+    const otp = generateOTP();
+
+    // Store new OTP in user's record with timestamp
+    const otpRecord = {
+      otp,
+      created_at: new Date().toISOString(),
+      is_verified: false,
+    };
+
+    // Update user's OTP record
+    user.otp_record = otpRecord;
+    await user.save();
+
+    // Format phone number with country code if not already included
+    const fullPhoneNumber = mobileNumber.startsWith("+")
+      ? mobileNumber
+      : `${countryCode}${mobileNumber}`;
+
+    // Send OTP via WhatsApp
+    await sendWhatsAppOTP(fullPhoneNumber, otp);
+
+    return {
+      success: true,
+      message: "New OTP sent to your WhatsApp number for signup verification",
+      mobile_number: mobileNumber,
+    };
+  } catch (error) {
+    console.error("Resend Signup OTP failed:", error);
+    return {
+      success: false,
+      message: "Failed to resend OTP. Please try again later.",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    };
   }
 }
 

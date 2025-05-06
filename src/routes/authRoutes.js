@@ -7,6 +7,8 @@ import {
   signinVerifyOTP,
   refreshToken,
   logout,
+  signinResendOTP,
+  signupResendOTP,
 } from "../controllers/authController.js";
 import { refreshTokenMiddleware } from "../middlewares/authMiddleware.js";
 
@@ -15,10 +17,12 @@ const router = express.Router();
 // Authentication endpoints - Sign In
 router.post("/signin", signinInitiate);
 router.post("/signin/otp", signinVerifyOTP);
+router.post("/signin/resend-otp", signinResendOTP);
 
-// Authentication endpoints - Sign Up (new two-step process)
+// Authentication endpoints - Sign Up
 router.post("/signup", signupInitiate);
 router.post("/signup/otp", signupVerifyOTP);
+router.post("/signup/resend-otp", signupResendOTP);
 
 // Token refresh endpoint
 router.post("/refresh-token", refreshTokenMiddleware, refreshToken);

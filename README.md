@@ -93,7 +93,7 @@ npm run dev
 - `NODE_ENV` - Environment (development/production)
 - `ACCESS_TOKEN_SECRET` - Secret for access tokens
 - `REFRESH_TOKEN_SECRET` - Secret for refresh tokens
-- `ACCESS_TOKEN_EXPIRY` - Access token expiry (default: 25m)
+- `ACCESS_TOKEN_EXPIRY` - Access token expiry (default: 59m)
 - `REFRESH_TOKEN_EXPIRY` - Refresh token expiry (default: 7d)
 
 

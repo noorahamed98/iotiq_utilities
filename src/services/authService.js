@@ -388,23 +388,19 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       throw new Error("OTP already used. Please request a new OTP.");
     }
 
-    // Check if OTP is expired (using shorter expiration window - 20 seconds)
+    // Check if OTP is expired (using a more reasonable timeout - 5 minutes)
     const otpCreatedAt = new Date(user.otp_record.created_at);
     const now = new Date();
 
-    // Check for 20-second expiration
-    const diffInSeconds = (now - otpCreatedAt) / 1000;
-    if (diffInSeconds > 20) {
+    // Calculate time difference in minutes
+    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
+
+    // Check if OTP is expired (5 minutes)
+    if (diffInMinutes > 5) {
       // Mark OTP as verified but expired to prevent reuse
       user.otp_record.is_verified = true;
       await user.save();
       throw new Error("OTP expired. Please request a new OTP.");
-    }
-
-    // For backward compatibility, also check 15-minute expiration
-    const diffInMinutes = diffInSeconds / 60;
-    if (diffInMinutes > 15) {
-      throw new Error("OTP expired");
     }
 
     // Verify OTP
@@ -535,22 +531,18 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
       throw new Error("OTP already used. Please request a new OTP.");
     }
 
-    // Check if OTP is expired (using shorter expiration window - 20 seconds)
+    // Check if OTP is expired (using a more reasonable timeout - 5 minutes)
     const otpCreatedAt = new Date(user.otp_record.created_at);
     const now = new Date();
 
-    // Check for 20-second expiration
-    const diffInSeconds = (now - otpCreatedAt) / 1000;
-    if (diffInSeconds > 20) {
+    // Calculate time difference in minutes
+    const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
+
+    // Check if OTP is expired (5 minutes)
+    if (diffInMinutes > 5) {
       // Mark OTP as verified but expired to prevent reuse
       user.otp_record.is_verified = true;
       await user.save();
-      throw new Error("OTP expired. Please request a new OTP.");
-    }
-
-    // For backward compatibility, also check 15-minute expiration
-    const diffInMinutes = diffInSeconds / 60;
-    if (diffInMinutes > 15) {
       throw new Error("OTP expired. Please request a new OTP.");
     }
 

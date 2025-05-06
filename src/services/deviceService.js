@@ -12,7 +12,14 @@ export async function getSpaceDevices(mobileNumber, spaceId) {
     throw new Error("Space not found");
   }
 
-  return space.devices || [];
+  // Transform the devices to include space information
+  const devicesWithSpaceInfo = space.devices.map((device) => ({
+    ...device.toObject(),
+    space_id: space._id,
+    space_name: space.space_name,
+  }));
+
+  return devicesWithSpaceInfo || [];
 }
 
 // Add to deviceService.js
@@ -63,7 +70,14 @@ export async function getDeviceById(mobileNumber, spaceId, deviceId) {
     throw new Error("Device not found");
   }
 
-  return device;
+  // Add space information to the device
+  const deviceWithSpaceInfo = {
+    ...device.toObject(),
+    space_id: space._id,
+    space_name: space.space_name,
+  };
+
+  return deviceWithSpaceInfo;
 }
 
 // Add a new device to a space

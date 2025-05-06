@@ -10,7 +10,6 @@ import {
 
 // Part 1: Initiate sign-in and send OTP via WhatsApp
 export async function signinInitiate(req, res) {
-  console.log("Function Called Initiatesignin", req.body);
   try {
     const { mobile_number, country_code } = req.body;
 

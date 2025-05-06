@@ -413,6 +413,7 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       user: {
         user_name: user.user_name,
         mobile_number: user.mobile_number,
+        user_id: user._id,
       },
       tokens: {
         accessToken,
@@ -544,6 +545,7 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
       user: {
         user_name: user.user_name,
         mobile_number: user.mobile_number,
+        user_id: user._id,
       },
       tokens: {
         accessToken,

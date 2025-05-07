@@ -7,6 +7,7 @@ import {
 } from "../services/authService.js";
 import * as spaceController from "../controllers/spaceController.js";
 import * as deviceController from "../controllers/deviceController.js";
+import * as setupController from "../controllers/setupController.js";
 
 const router = express.Router();
 
@@ -167,5 +168,15 @@ router.delete(
   universalAuth,
   deviceController.deleteDevice
 );
+
+// Create or update setup for a space
+router.post(
+  "/spaces/:spaceId/setup",
+  universalAuth,
+  setupController.createOrUpdateSetup
+);
+
+// Get setup for a space
+router.get("/spaces/:spaceId/setup", universalAuth, setupController.getSetup);
 
 export default router;

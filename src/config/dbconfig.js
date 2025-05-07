@@ -51,9 +51,95 @@ const deviceSchema = new mongoose.Schema(
         return this.connection_type === "wifi";
       },
     },
+    status: {
+      type: String,
+      enum: ["on", "off"],
+      required: function () {
+        return this.device_type === "base";
+      },
+      default: function () {
+        return this.device_type === "base" ? "off" : undefined;
+      },
+    },
+    level: {
+      type: Number,
+      min: 0,
+      max: 100,
+      required: function () {
+        return this.device_type === "tank";
+      },
+      default: function () {
+        return this.device_type === "tank" ? 0 : undefined;
+      },
+      validate: {
+        validator: function (value) {
+          if (this.device_type === "tank") {
+            return value >= 0 && value <= 100;
+          }
+          return true;
+        },
+        message: "Tank level must be between 0 and 100",
+      },
+    },
   },
   { timestamps: true }
 );
+
+// Action Schema (for setup conditions)
+const actionSchema = new mongoose.Schema({
+  device_id: {
+    type: String,
+    required: [true, "Device ID for action is required"],
+  },
+  set_status: {
+    type: String,
+    required: [true, "Status value for action is required"],
+    enum: ["on", "off"],
+  },
+});
+
+// Condition Schema (for setup)
+const conditionSchema = new mongoose.Schema({
+  device_id: {
+    type: String,
+    required: [true, "Device ID for condition is required"],
+  },
+  device_type: {
+    type: String,
+    required: [true, "Device type for condition is required"],
+    enum: ["base", "tank"],
+  },
+  status: {
+    type: String,
+    enum: ["on", "off"],
+    required: function () {
+      return this.device_type === "base";
+    },
+  },
+  level: {
+    type: Number,
+    min: 0,
+    max: 100,
+    required: function () {
+      return this.device_type === "tank";
+    },
+    validate: {
+      validator: function (value) {
+        if (this.device_type === "tank") {
+          return value >= 0 && value <= 100;
+        }
+        return true;
+      },
+      message: "Tank level threshold must be between 0 and 100",
+    },
+  },
+  actions: [actionSchema],
+});
+
+// Setup Schema
+const setupSchema = new mongoose.Schema({
+  condition: conditionSchema,
+});
 
 // Space Schema
 const spaceSchema = new mongoose.Schema({
@@ -66,6 +152,10 @@ const spaceSchema = new mongoose.Schema({
     required: [true, "Address is required"],
   },
   devices: [deviceSchema],
+  setup: {
+    type: setupSchema,
+    default: null,
+  },
   created_at: {
     type: Date,
     default: Date.now,

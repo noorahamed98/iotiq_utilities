@@ -15,9 +15,10 @@ export const getAllDevices = async (req, res) => {
 
     const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
 
+    // Ensure that devices is always returned as an array
     return res.status(200).json({
       success: true,
-      data: devices,
+      data: Array.isArray(devices) ? devices : devices ? [devices] : [],
     });
   } catch (error) {
     // Determine appropriate status code based on error

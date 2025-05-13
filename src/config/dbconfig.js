@@ -18,74 +18,6 @@ const connectDB = async () => {
   }
 };
 
-// Device Schema
-const deviceSchema = new mongoose.Schema(
-  {
-    device_id: {
-      type: String,
-      required: [true, "Device ID is required"],
-    },
-    device_type: {
-      type: String,
-      required: [true, "Device type is required"],
-      enum: ["base", "tank"], // Restrict to only these values
-    },
-    device_name: {
-      type: String,
-      required: [true, "Device name is required"],
-    },
-    connection_type: {
-      type: String,
-      required: [true, "Connection type is required"],
-      enum: ["wifi", "without_wifi"], // Restrict to only these values
-    },
-    ssid: {
-      type: String,
-      required: function () {
-        return this.connection_type === "wifi";
-      },
-    },
-    password: {
-      type: String,
-      required: function () {
-        return this.connection_type === "wifi";
-      },
-    },
-    status: {
-      type: String,
-      enum: ["on", "off"],
-      required: function () {
-        return this.device_type === "base";
-      },
-      default: function () {
-        return this.device_type === "base" ? "off" : undefined;
-      },
-    },
-    level: {
-      type: Number,
-      min: 0,
-      max: 100,
-      required: function () {
-        return this.device_type === "tank";
-      },
-      default: function () {
-        return this.device_type === "tank" ? 0 : undefined;
-      },
-      validate: {
-        validator: function (value) {
-          if (this.device_type === "tank") {
-            return value >= 0 && value <= 100;
-          }
-          return true;
-        },
-        message: "Tank level must be between 0 and 100",
-      },
-    },
-  },
-  { timestamps: true }
-);
-
-// Action Schema (for setup conditions)
 const actionSchema = new mongoose.Schema({
   device_id: {
     type: String,
@@ -98,7 +30,6 @@ const actionSchema = new mongoose.Schema({
   },
 });
 
-// Condition Schema (for setup)
 const conditionSchema = new mongoose.Schema({
   device_id: {
     type: String,
@@ -133,15 +64,39 @@ const conditionSchema = new mongoose.Schema({
       message: "Tank level threshold must be between 0 and 100",
     },
   },
+  operator: {
+    type: String,
+    enum: ["<", ">", "<=", ">=", "=="],
+    required: [true, "Comparison operator is required"],
+  },
   actions: [actionSchema],
 });
 
-// Setup Schema
 const setupSchema = new mongoose.Schema({
-  condition: conditionSchema,
+  name: {
+    type: String,
+    required: [true, "Setup name is required"],
+  },
+  description: String,
+  active: {
+    type: Boolean,
+    default: true,
+  },
+  condition: {
+    type: conditionSchema,
+    required: [true, "Condition is required"],
+  },
+  created_at: {
+    type: Date,
+    default: Date.now,
+  },
+  updated_at: {
+    type: Date,
+    default: Date.now,
+  },
 });
 
-// Space Schema
+// Space Schema - Updated to include multiple setups
 const spaceSchema = new mongoose.Schema({
   space_name: {
     type: String,
@@ -152,15 +107,122 @@ const spaceSchema = new mongoose.Schema({
     required: [true, "Address is required"],
   },
   devices: [deviceSchema],
-  setup: {
-    type: setupSchema,
-    default: null,
-  },
+  setups: [setupSchema], // Changed from single setup to array of setups
   created_at: {
     type: Date,
     default: Date.now,
   },
 });
+// Device Schema - Updated with properties for IoT integration
+const deviceSchema = new mongoose.Schema(
+  {
+    device_id: {
+      type: String,
+      required: [true, "Device ID is required"],
+    },
+    device_type: {
+      type: String,
+      required: [true, "Device type is required"],
+      enum: ["base", "tank"],
+    },
+    device_name: {
+      type: String,
+      required: [true, "Device name is required"],
+    },
+    connection_type: {
+      type: String,
+      required: [true, "Connection type is required"],
+      enum: ["wifi", "ble", "without_wifi"],
+    },
+    ssid: {
+      type: String,
+      required: function () {
+        return this.connection_type === "wifi";
+      },
+    },
+    password: {
+      type: String,
+      required: function () {
+        return this.connection_type === "wifi";
+      },
+    },
+    status: {
+      type: String,
+      enum: ["on", "off"],
+      required: function () {
+        return this.device_type === "base";
+      },
+      default: function () {
+        return this.device_type === "base" ? "off" : undefined;
+      },
+    },
+    level: {
+      type: Number,
+      min: 0,
+      max: 100,
+      required: function () {
+        return this.device_type === "tank";
+      },
+      default: function () {
+        return this.device_type === "tank" ? 0 : undefined;
+      },
+    },
+    parent_device_id: {
+      type: String,
+      required: function () {
+        return this.device_type === "tank"; // Tank models require a parent (base model)
+      },
+    },
+    channel: {
+      type: String,
+      required: function () {
+        return (
+          this.device_type === "tank" && this.connection_type === "without_wifi"
+        );
+      },
+    },
+    address_l: {
+      type: String,
+      required: function () {
+        return (
+          this.device_type === "tank" && this.connection_type === "without_wifi"
+        );
+      },
+    },
+    address_h: {
+      type: String,
+      required: function () {
+        return (
+          this.device_type === "tank" && this.connection_type === "without_wifi"
+        );
+      },
+    },
+    slave_name: {
+      type: String,
+      required: function () {
+        return this.device_type === "tank";
+      },
+    },
+    thing_name: {
+      type: String, // AWS IoT thing name
+      required: function () {
+        return this.connection_type === "wifi" || this.device_type === "base";
+      },
+    },
+    online_status: {
+      type: Boolean,
+      default: false,
+    },
+    last_updated: {
+      type: Date,
+      default: Date.now,
+    },
+    firmware_version: String,
+  },
+  { timestamps: true }
+);
+
+// Condition Schema (for setup)
 
 // OTP Record Schema
 const otpRecordSchema = new mongoose.Schema({

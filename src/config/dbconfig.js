@@ -96,23 +96,6 @@ const setupSchema = new mongoose.Schema({
   },
 });
 
-// Space Schema - Updated to include multiple setups
-const spaceSchema = new mongoose.Schema({
-  space_name: {
-    type: String,
-    required: [true, "Space name is required"],
-  },
-  address: {
-    type: String,
-    required: [true, "Address is required"],
-  },
-  devices: [deviceSchema],
-  setups: [setupSchema], // Changed from single setup to array of setups
-  created_at: {
-    type: Date,
-    default: Date.now,
-  },
-});
 // Device Schema - Updated with properties for IoT integration
 const deviceSchema = new mongoose.Schema(
   {
@@ -222,7 +205,23 @@ const deviceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Condition Schema (for setup)
+// Space Schema - Updated to include multiple setups
+const spaceSchema = new mongoose.Schema({
+  space_name: {
+    type: String,
+    required: [true, "Space name is required"],
+  },
+  address: {
+    type: String,
+    required: [true, "Address is required"],
+  },
+  devices: [deviceSchema],
+  setups: [setupSchema], // Changed from single setup to array of setups
+  created_at: {
+    type: Date,
+    default: Date.now,
+  },
+});
 
 // OTP Record Schema
 const otpRecordSchema = new mongoose.Schema({

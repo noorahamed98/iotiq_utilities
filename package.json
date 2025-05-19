@@ -12,6 +12,7 @@
   "type": "module",
   "description": "",
   "dependencies": {
+    "aws-iot-device-sdk": "^2.2.15",
     "axios": "^1.9.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

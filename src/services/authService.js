@@ -1,3 +1,5 @@
+// src/services/authService.js - Complete file with optimized OTP handling
+
 import { User } from "../config/dbconfig.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
@@ -328,22 +330,19 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
     // Generate OTP
     const otp = generateOTP();
 
-    // Store OTP in user's record with timestamp
-    const otpRecord = {
-      otp,
-      created_at: new Date().toISOString(),
-      is_verified: false,
-    };
-
-    // Add OTP to user's records
-    user.otp_record = otpRecord;
-
-    // Keep isActive as false until OTP is verified
-    // This ensures proper session management
-    user.isActive = false;
-
-    // Update user in the database
-    await user.save();
+    // Store OTP directly without triggering validation on the entire user document
+    // This is the key change to prevent validation errors on device fields
+    await User.updateOne(
+      { mobile_number: mobileNumber },
+      {
+        $set: {
+          "otp_record.otp": otp,
+          "otp_record.created_at": new Date(),
+          "otp_record.is_verified": false,
+          isActive: false, // Keep isActive as false until OTP is verified
+        },
+      }
+    );
 
     // Format phone number with country code if not already included
     const fullPhoneNumber = mobileNumber.startsWith("+")
@@ -398,8 +397,10 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
     // Check if OTP is expired (5 minutes)
     if (diffInMinutes > 5) {
       // Mark OTP as verified but expired to prevent reuse
-      user.otp_record.is_verified = true;
-      await user.save();
+      await User.updateOne(
+        { mobile_number: mobileNumber },
+        { $set: { "otp_record.is_verified": true } }
+      );
       throw new Error("OTP expired. Please request a new OTP.");
     }
 
@@ -408,23 +409,33 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       throw new Error("Incorrect OTP");
     }
 
-    // Mark OTP as verified and user as active
-    user.otp_record.is_verified = true;
-    user.isActive = true;
-    await user.save();
+    // Mark OTP as verified and user as active using direct update
+    // This avoids triggering validation on the entire user document
+    await User.updateOne(
+      { mobile_number: mobileNumber },
+      {
+        $set: {
+          "otp_record.is_verified": true,
+          isActive: true,
+        },
+      }
+    );
+
+    // Fetch the user again to get the latest data
+    const updatedUser = await User.findOne({ mobile_number: mobileNumber });
 
     // Generate tokens (both access and refresh tokens)
     const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
-      generateTokens(user);
+      generateTokens(updatedUser);
 
     // Return user and tokens
     return {
       success: true,
       message: "Sign in successful",
       user: {
-        user_name: user.user_name,
-        mobile_number: user.mobile_number,
-        user_id: user._id,
+        user_name: updatedUser.user_name,
+        mobile_number: updatedUser.mobile_number,
+        user_id: updatedUser._id,
       },
       tokens: {
         accessToken,
@@ -466,19 +477,38 @@ export async function initiateSignUp(
     const otp = generateOTP();
 
     // Create temporary user object with OTP (not saved to database yet)
-    const tempUser = {
+    const newUser = new User({
       user_name: userName,
       mobile_number: mobileNumber,
       otp_record: {
         otp,
-        created_at: new Date().toISOString(),
+        created_at: new Date(),
         is_verified: false,
       },
       isActive: false,
-    };
+      spaces: [
+        {
+          space_name: "Home",
+          address: "Default Address",
+          devices: [],
+        },
+      ], // Create a default space to avoid empty spaces array
+    });
 
-    // Store the temporary user data in the database
-    const newUser = await User.create(tempUser);
+    // Save the user, but catch validation errors
+    try {
+      await newUser.save();
+    } catch (saveError) {
+      console.error("User save error:", saveError);
+      return {
+        success: false,
+        message: "Failed to create user account. Please try again.",
+        error:
+          process.env.NODE_ENV === "development"
+            ? saveError.message
+            : undefined,
+      };
+    }
 
     // Format phone number with country code if not already included
     const fullPhoneNumber = mobileNumber.startsWith("+")
@@ -541,8 +571,10 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
     // Check if OTP is expired (5 minutes)
     if (diffInMinutes > 5) {
       // Mark OTP as verified but expired to prevent reuse
-      user.otp_record.is_verified = true;
-      await user.save();
+      await User.updateOne(
+        { mobile_number: mobileNumber },
+        { $set: { "otp_record.is_verified": true } }
+      );
       throw new Error("OTP expired. Please request a new OTP.");
     }
 
@@ -551,23 +583,32 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
       throw new Error("Incorrect OTP. Please try again.");
     }
 
-    // Mark OTP as verified and user as active
-    user.otp_record.is_verified = true;
-    user.isActive = true;
-    await user.save();
+    // Mark OTP as verified and user as active using direct update
+    await User.updateOne(
+      { mobile_number: mobileNumber },
+      {
+        $set: {
+          "otp_record.is_verified": true,
+          isActive: true,
+        },
+      }
+    );
+
+    // Fetch the user again to get the latest data
+    const updatedUser = await User.findOne({ mobile_number: mobileNumber });
 
     // Generate tokens
     const { accessToken, refreshToken, accessTokenExpiry, refreshTokenExpiry } =
-      generateTokens(user);
+      generateTokens(updatedUser);
 
     // Return user and tokens
     return {
       success: true,
       message: "Signup successful",
       user: {
-        user_name: user.user_name,
-        mobile_number: user.mobile_number,
-        user_id: user._id,
+        user_name: updatedUser.user_name,
+        mobile_number: updatedUser.mobile_number,
+        user_id: updatedUser._id,
       },
       tokens: {
         accessToken,
@@ -600,16 +641,17 @@ export async function resendSignInOTP(mobileNumber, countryCode = "+91") {
     // Generate new OTP
     const otp = generateOTP();
 
-    // Store new OTP in user's record with timestamp
-    const otpRecord = {
-      otp,
-      created_at: new Date().toISOString(),
-      is_verified: false,
-    };
-
-    // Update user's OTP record
-    user.otp_record = otpRecord;
-    await user.save();
+    // Store new OTP directly without triggering validation
+    await User.updateOne(
+      { mobile_number: mobileNumber },
+      {
+        $set: {
+          "otp_record.otp": otp,
+          "otp_record.created_at": new Date(),
+          "otp_record.is_verified": false,
+        },
+      }
+    );
 
     // Format phone number with country code if not already included
     const fullPhoneNumber = mobileNumber.startsWith("+")
@@ -653,16 +695,17 @@ export async function resendSignUpOTP(mobileNumber, countryCode = "+91") {
     // Generate new OTP
     const otp = generateOTP();
 
-    // Store new OTP in user's record with timestamp
-    const otpRecord = {
-      otp,
-      created_at: new Date().toISOString(),
-      is_verified: false,
-    };
-
-    // Update user's OTP record
-    user.otp_record = otpRecord;
-    await user.save();
+    // Store new OTP directly without triggering validation
+    await User.updateOne(
+      { mobile_number: mobileNumber },
+      {
+        $set: {
+          "otp_record.otp": otp,
+          "otp_record.created_at": new Date(),
+          "otp_record.is_verified": false,
+        },
+      }
+    );
 
     // Format phone number with country code if not already included
     const fullPhoneNumber = mobileNumber.startsWith("+")
@@ -694,16 +737,15 @@ export async function resendSignUpOTP(mobileNumber, countryCode = "+91") {
  */
 export async function logoutUser(mobileNumber) {
   try {
-    // Find the user
-    const user = await User.findOne({ mobile_number: mobileNumber });
+    // Direct update of isActive status without triggering document validation
+    const result = await User.updateOne(
+      { mobile_number: mobileNumber },
+      { $set: { isActive: false } }
+    );
 
-    if (!user) {
+    if (result.matchedCount === 0) {
       throw new Error("User not found");
     }
-
-    // Set isActive to false
-    user.isActive = false;
-    await user.save();
 
     return {
       success: true,

@@ -1,6 +1,6 @@
 // Update src/routes/protectedRoutes.js to include setup routes
 import express from "express";
-import { universalAuth } from "../middlewares/authMiddleware.js";
+import { authenticateToken as universalAuth } from "../middlewares/authMiddleware.js";
 import * as spaceController from "../controllers/spaceController.js";
 import * as deviceController from "../controllers/deviceController.js";
 import * as setupController from "../controllers/setupController.js";

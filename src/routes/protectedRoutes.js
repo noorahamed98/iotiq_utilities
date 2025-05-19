@@ -42,11 +42,19 @@ router.post(
   "/spaces/:spaceId/devices/:baseDeviceId/tank",
   universalAuth,
   deviceController.addTankDevice
-); // New route for adding tank devices
+);
+
+// New route for adding tank devices
 router.delete(
   "/spaces/:spaceId/devices/:deviceId",
   universalAuth,
   deviceController.deleteDevice
+);
+
+router.put(
+  "/spaces/:spaceId/devices/:deviceId/status",
+  universalAuth,
+  deviceController.updateDeviceStatus
 );
 
 // Setup routes

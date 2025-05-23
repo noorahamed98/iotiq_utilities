@@ -318,20 +318,19 @@ async function sendWhatsAppOTP(phoneNumber, otp) {
 }
 
 export async function initiateSignIn(mobileNumber, countryCode = "+91") {
+  // Find the user
+  const user = await User.findOne({ mobile_number: mobileNumber });
+
+  // If user not found - throw error to be caught by controller
+  if (!user) {
+    throw new Error("User not found");
+  }
+
   try {
-    // Find the user
-    const user = await User.findOne({ mobile_number: mobileNumber });
-
-    // If user not found
-    if (!user) {
-      throw new Error("User not found");
-    }
-
     // Generate OTP
     const otp = generateOTP();
 
     // Store OTP directly without triggering validation on the entire user document
-    // This is the key change to prevent validation errors on device fields
     await User.updateOne(
       { mobile_number: mobileNumber },
       {
@@ -358,12 +357,9 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
       mobile_number: mobileNumber,
     };
   } catch (error) {
+    // Only catch WhatsApp/OTP related errors, not user validation errors
     console.error("WhatsApp OTP sending failed:", error);
-    return {
-      success: false,
-      message: "Failed to send OTP to your WhatsApp. Please try again later.",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
-    };
+    throw new Error("Failed to send OTP via WhatsApp");
   }
 }
 

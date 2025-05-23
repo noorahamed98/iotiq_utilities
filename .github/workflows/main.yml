@@ -24,6 +24,7 @@ jobs:
         ssh -o StrictHostKeyChecking=no ${{ secrets.IOT_UTILITY_USER }}@${{ secrets.IOT_UTILITY_HOST }} << 'EOF'
           cd ~/iotiq_utilities
           git pull origin master
+          echo "$ENV" > .env
           sudo npm i
           sudo npm run build
           sudo pm2 restart 0

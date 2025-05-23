@@ -41,7 +41,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use("/", apiLimiter);
+// app.use("/", apiLimiter);
 
 // Routes
 app.use("/", authRoutes);

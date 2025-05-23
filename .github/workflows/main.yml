@@ -23,7 +23,7 @@ jobs:
       env: 
         ENV_CONTENT: ${{ secrets.ENV }}
       run: |
-        ssh -o StrictHostKeyChecking=no ${{ secrets.IOT_UTILITY_USER }}@${{ secrets.IOT_UTILITY_HOST }} << 'EOF'
+        ssh -o StrictHostKeyChecking=no ${{ secrets.IOT_UTILITY_USER }}@${{ secrets.IOT_UTILITY_HOST }} << EOF
           cd ~/iotiq_utilities
           git pull origin master
           echo 

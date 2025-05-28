@@ -1,8 +1,43 @@
-// src/services/deviceService.js - Update with tank device functionality
+// src/services/deviceService.js - Update with global device uniqueness checks
 import { User } from "../config/dbconfig.js";
 import { getMqttClient, publish } from "../utils/mqttHelper.js";
 import { getTopic } from "../config/awsIotConfig.js";
 import logger from "../utils/logger.js";
+
+// Helper function to check if device exists globally
+async function checkDeviceExistsGlobally(deviceId, thingName = null) {
+  const query = {
+    $or: [
+      { "spaces.devices.device_id": deviceId }
+    ]
+  };
+
+  // If thing_name is provided, also check for it
+  if (thingName) {
+    query.$or.push({ "spaces.devices.thing_name": thingName });
+  }
+
+  const existingUser = await User.findOne(query);
+  
+  if (existingUser) {
+    // Find the specific device and space details
+    for (const space of existingUser.spaces) {
+      const device = space.devices.find(d => 
+        d.device_id === deviceId || (thingName && d.thing_name === thingName)
+      );
+      if (device) {
+        return {
+          exists: true,
+          user: existingUser,
+          space: space,
+          device: device
+        };
+      }
+    }
+  }
+  
+  return { exists: false };
+}
 
 // Get all devices in a space
 export async function getSpaceDevices(mobileNumber, spaceId) {
@@ -84,6 +119,26 @@ export async function getDeviceById(mobileNumber, spaceId, deviceId) {
   return deviceWithSpaceInfo;
 }
 
+// Check if device can be transferred or needs to be removed first
+export async function checkDeviceAvailability(deviceId, thingName = null) {
+  const result = await checkDeviceExistsGlobally(deviceId, thingName);
+  
+  if (result.exists) {
+    return {
+      available: false,
+      currentOwner: {
+        mobile_number: result.user.mobile_number,
+        user_name: result.user.user_name,
+        space_name: result.space.space_name,
+        space_id: result.space._id
+      },
+      device: result.device
+    };
+  }
+  
+  return { available: true };
+}
+
 // Add a base device to a space
 export async function addDevice(mobileNumber, spaceId, deviceData) {
   const user = await User.findOne({ mobile_number: mobileNumber });
@@ -98,15 +153,23 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
     throw new Error("Space not found");
   }
 
-  // Check if device with the same ID already exists
-  const existingDevice = user.spaces[spaceIndex].devices.find(
-    (device) => device.device_id === deviceData.device_id
+  // Check if device exists globally
+  const globalCheck = await checkDeviceExistsGlobally(
+    deviceData.device_id, 
+    deviceData.thing_name
   );
 
-  if (existingDevice) {
-    throw new Error(
-      `Device with ID '${deviceData.device_id}' already exists in this space`
-    );
+  if (globalCheck.exists) {
+    // Check if it's the same user trying to add to a different space
+    if (globalCheck.user.mobile_number === mobileNumber) {
+      throw new Error(
+        `Device '${deviceData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first before adding to another space.`
+      );
+    } else {
+      throw new Error(
+        `Device '${deviceData.device_id}' is already registered to another account. Each device can only be registered to one account at a time.`
+      );
+    }
   }
 
   // For wifi connection, ensure ssid and password are provided
@@ -183,15 +246,20 @@ export async function addTankDevice(
       throw new Error("Base device not found or is not a base model");
     }
 
-    // Check if device with the same ID already exists
-    const existingDevice = user.spaces[spaceIndex].devices.find(
-      (device) => device.device_id === tankData.device_id
-    );
+    // Check if tank device exists globally
+    const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
 
-    if (existingDevice) {
-      throw new Error(
-        `Device with ID '${tankData.device_id}' already exists in this space`
-      );
+    if (globalCheck.exists) {
+      // Check if it's the same user trying to add to a different space
+      if (globalCheck.user.mobile_number === mobileNumber) {
+        throw new Error(
+          `Tank device '${tankData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first before adding to another space.`
+        );
+      } else {
+        throw new Error(
+          `Tank device '${tankData.device_id}' is already registered to another account. Each device can only be registered to one account at a time.`
+        );
+      }
     }
 
     // Ensure required fields for tank model
@@ -281,6 +349,90 @@ export async function addTankDevice(
     logger.error(`Error adding tank device: ${error.message}`);
     throw error;
   }
+}
+
+// Transfer device to another space within the same account
+export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, deviceId) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const fromSpaceIndex = user.spaces.findIndex(
+    (space) => space._id.toString() === fromSpaceId
+  );
+  const toSpaceIndex = user.spaces.findIndex(
+    (space) => space._id.toString() === toSpaceId
+  );
+
+  if (fromSpaceIndex === -1 || toSpaceIndex === -1) {
+    throw new Error("Source or destination space not found");
+  }
+
+  // Find the device in the source space
+  const deviceIndex = user.spaces[fromSpaceIndex].devices.findIndex(
+    (device) => device.device_id === deviceId
+  );
+
+  if (deviceIndex === -1) {
+    throw new Error("Device not found in source space");
+  }
+
+  const device = user.spaces[fromSpaceIndex].devices[deviceIndex];
+
+  // If it's a base device, check for connected tank devices
+  if (device.device_type === "base") {
+    const connectedTanks = user.spaces[fromSpaceIndex].devices.filter(
+      (d) => d.device_type === "tank" && d.parent_device_id === deviceId
+    );
+
+    if (connectedTanks.length > 0) {
+      throw new Error(
+        "Cannot transfer base device with connected tank devices. Please transfer or remove the tank devices first."
+      );
+    }
+  }
+
+  // Remove device from source space
+  user.spaces[fromSpaceIndex].devices.splice(deviceIndex, 1);
+
+  // Add device to destination space
+  user.spaces[toSpaceIndex].devices.push(device);
+
+  // Clean up any setups in the source space that used this device
+  if (user.spaces[fromSpaceIndex].setups) {
+    for (let i = 0; i < user.spaces[fromSpaceIndex].setups.length; i++) {
+      const setup = user.spaces[fromSpaceIndex].setups[i];
+
+      if (setup.condition.device_id === deviceId) {
+        user.spaces[fromSpaceIndex].setups.splice(i, 1);
+        i--;
+        continue;
+      }
+
+      if (setup.condition.actions) {
+        const actionIndex = setup.condition.actions.findIndex(
+          (action) => action.device_id === deviceId
+        );
+
+        if (actionIndex !== -1) {
+          setup.condition.actions.splice(actionIndex, 1);
+          if (setup.condition.actions.length === 0) {
+            user.spaces[fromSpaceIndex].setups.splice(i, 1);
+            i--;
+          }
+        }
+      }
+    }
+  }
+
+  await user.save();
+
+  return {
+    success: true,
+    message: `Device transferred successfully from ${user.spaces[fromSpaceIndex].space_name} to ${user.spaces[toSpaceIndex].space_name}`,
+    device: device
+  };
 }
 
 // Delete a device from a space

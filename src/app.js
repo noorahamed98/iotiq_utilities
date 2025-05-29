@@ -10,6 +10,7 @@ import protectedRoutes from "./routes/protectedRoutes.js";
 import controlRoutes from "./routes/controlRoute.js";
 import { errorHandler } from "./middlewares/errorMiddleware.js";
 import logRequests from "./middlewares/loggerMiddleware.js";
+import tankDataRoutes from "./routes/tankDataRoute.js";
 
 dotenv.config();
 
@@ -39,7 +40,8 @@ app.use("/", authRoutes);
 app.use("/", protectedRoutes);
 app.use("/", controlRoutes);  // <-- Mount publish route here
 
-app.use("/", userRoutes)
+app.use("/", userRoutes);
+app.use("/",tankDataRoutes);
 
 app.use(errorHandler);
 

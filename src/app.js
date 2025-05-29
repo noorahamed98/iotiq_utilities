@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import authRoutes from "./routes/authRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 import protectedRoutes from "./routes/protectedRoutes.js";
 import controlRoutes from "./routes/controlRoute.js";
 import { errorHandler } from "./middlewares/errorMiddleware.js";
@@ -37,6 +38,8 @@ app.use(logRequests);
 app.use("/", authRoutes);
 app.use("/", protectedRoutes);
 app.use("/", controlRoutes);  // <-- Mount publish route here
+
+app.use("/", userRoutes)
 
 app.use(errorHandler);
 

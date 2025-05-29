@@ -6,6 +6,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import dotenv from "dotenv";
 import authRoutes from "./routes/authRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 import protectedRoutes from "./routes/protectedRoutes.js";
 import { errorHandler } from "./middlewares/errorMiddleware.js";
 import logRequests from "./middlewares/loggerMiddleware.js";
@@ -47,6 +48,8 @@ const apiLimiter = rateLimit({
 app.use("/", authRoutes);
 
 app.use("/", protectedRoutes);
+
+app.use("/", userRoutes)
 
 // Error handling middleware (must be after routes)
 app.use(errorHandler);

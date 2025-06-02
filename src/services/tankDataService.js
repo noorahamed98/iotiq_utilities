@@ -22,7 +22,7 @@ export async function sensorData(req, res) {
       return res.status(404).json({ success: false, message: 'No data found for the given sensor.' });
     }
 
-    res.json({ success: true, data: result.rows[0] });
+    res.json({ success: true, data: [result.rows[0]] });
   } catch (error) {
     console.error('Error fetching latest sensor data:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });

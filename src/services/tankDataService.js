@@ -53,7 +53,12 @@ export async function switchStatus(req, res) {
       return res.status(404).json({ success: false, message: 'No data found for the given switch.' });
     }
 
-    res.json({ success: true, data: [result.rows[0]] }); //object to array
+    const data = result.rows[0];
+
+    // Convert status from "true"/"false" string to "on"/"off"
+    data.status = data.status === "true" ? "on" : "off";
+
+    res.json({ success: true, data: [data] });
   } catch (error) {
     console.error('Error fetching latest sensor data:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });

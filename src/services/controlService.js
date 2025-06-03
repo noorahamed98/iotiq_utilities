@@ -36,6 +36,7 @@ export async function control(req, res) {
 
     const thingid = result.rows[0].thingid;
     const topic = `mqtt/device/${thingid}/control`;
+
     const payload = JSON.stringify({
       ...req.body,
       // Optional: Add user info to the payload for tracking
@@ -62,3 +63,31 @@ export async function control(req, res) {
     });
   }
 };
+
+export async function setting(client, deviceid, payload) {
+  try {
+    const result = await client.query(
+      "SELECT thingid FROM sensor_data WHERE deviceid = $1 LIMIT 1",
+      [deviceid]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error(`No thingid found for deviceid: ${deviceid}`);
+    }
+
+    const thingid = result.rows[0].thingid;
+    const topic = `mqtt/device/${thingid}/setting`;
+    console.log(topic);
+    const finalPayload = JSON.stringify(payload);
+
+    await iotData
+      .publish({ topic, payload: finalPayload, qos: 0 })
+      .promise();
+
+    console.log(`✅ Payload published to topic: ${topic}`);
+    return { success: true, topic };
+  } catch (error) {
+    console.error("❌ Publish error in setting():", error);
+    throw new Error(`MQTT Publish Failed: ${error.message}`);
+  }
+}

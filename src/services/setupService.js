@@ -2,7 +2,8 @@
 import { User } from "../config/dbconfig.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
-
+import { setting } from "./controlService.js";
+import { client } from "../config/postgres.js";
 /**
  * Create a new setup configuration for a space
  * @param {String} mobileNumber - User's mobile number
@@ -25,29 +26,25 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       throw new Error("Space not found");
     }
 
-    // Get the space
     const space = user.spaces[spaceIndex];
 
-    // Validate that the condition device exists in the space
+    // Validate the condition device
     const conditionDeviceId = setupData.condition.device_id;
     const conditionDevice = space.devices.find(
       (device) => device.device_id === conditionDeviceId
     );
-
     if (!conditionDevice) {
       throw new Error(
         `Condition device with ID '${conditionDeviceId}' not found in this space`
       );
     }
-
-    // Validate that the device type matches what's specified in condition
     if (conditionDevice.device_type !== setupData.condition.device_type) {
       throw new Error(
         `Device type mismatch. Device '${conditionDeviceId}' is of type '${conditionDevice.device_type}', not '${setupData.condition.device_type}'`
       );
     }
 
-    // For base device conditions, validate status field
+    // Validate condition specifics
     if (conditionDevice.device_type === "base") {
       if (
         !setupData.condition.status ||
@@ -59,7 +56,6 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       }
     }
 
-    // For tank device conditions, validate level field
     if (conditionDevice.device_type === "tank") {
       if (
         setupData.condition.level === undefined ||
@@ -70,7 +66,6 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           "Level field is required and must be between 0 and 100 for tank devices"
         );
       }
-
       if (
         !setupData.condition.operator ||
         !["<", ">", "<=", ">=", "=="].includes(setupData.condition.operator)
@@ -79,27 +74,22 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       }
     }
 
-    // Validate each action device exists and is of type 'base'
+    // Validate each action device
     for (const action of setupData.condition.actions) {
       const actionDeviceId = action.device_id;
       const actionDevice = space.devices.find(
         (device) => device.device_id === actionDeviceId
       );
-
       if (!actionDevice) {
         throw new Error(
           `Action device with ID '${actionDeviceId}' not found in this space`
         );
       }
-
-      // Ensure action device is a base device
       if (actionDevice.device_type !== "base") {
         throw new Error(
           `Device '${actionDeviceId}' must be of type 'base' to be used in actions`
         );
       }
-
-      // Validate action status
       if (!action.set_status || !["on", "off"].includes(action.set_status)) {
         throw new Error(
           "set_status field is required and must be 'on' or 'off' for actions"
@@ -107,7 +97,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       }
     }
 
-    // Create a new setup with a unique ID
+    // Create the new setup
     const newSetup = {
       _id: new mongoose.Types.ObjectId(),
       name: setupData.name || `Setup ${(space.setups?.length || 0) + 1}`,
@@ -118,15 +108,31 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       updated_at: new Date(),
     };
 
-    // Initialize setups array if it doesn't exist
+    // Initialize setups array if needed
     if (!user.spaces[spaceIndex].setups) {
       user.spaces[spaceIndex].setups = [];
     }
 
-    // Add the new setup to the space
     user.spaces[spaceIndex].setups.push(newSetup);
 
-    // Save the updated user document
+    // ✅ MQTT Publish Payload Logic
+    const mqttPayload = {
+      deviceid: conditionDevice.device_id,
+      sensor_no: conditionDevice.sensor_no || "TM1",
+      switch_no: conditionDevice.switch_no || "BM1",
+      maximum:
+        ["<", "<="].includes(setupData.condition.operator) &&
+        setupData.condition.level !== undefined
+          ? setupData.condition.level
+          : 95,
+      minimum:
+        [">", ">="].includes(setupData.condition.operator) &&
+        setupData.condition.level !== undefined
+          ? setupData.condition.level
+          : 30,
+    };
+    setting(client,setupData.condition.actions[0].device_id,mqttPayload);
+    // Save changes
     await user.save();
 
     logger.info(`Setup created for space ${spaceId}`);

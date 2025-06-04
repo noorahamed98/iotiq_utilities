@@ -422,19 +422,18 @@ export async function updateSetupStatus(
     const setupIndex = user.spaces[spaceIndex].setups?.findIndex(
       (setup) => setup._id.toString() === setupId
     );
-
     if (setupIndex === -1 || setupIndex === undefined) {
       throw new Error("Setup not found");
     }
 
-    // Update active status
+    // Update setup status
     user.spaces[spaceIndex].setups[setupIndex].active = active;
     user.spaces[spaceIndex].setups[setupIndex].updated_at = new Date();
 
-    // Save the updated user document
+    // Save changes
     await user.save();
 
-    logger.info(`Setup status updated for setup ${setupId} to ${active}`);
+    logger.info(`Setup ${setupId} status updated to ${active}`);
     return user.spaces[spaceIndex].setups[setupIndex];
   } catch (error) {
     logger.error(`Error updating setup status: ${error.message}`);

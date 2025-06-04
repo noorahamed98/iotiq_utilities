@@ -161,8 +161,46 @@ export async function getSetups(mobileNumber, spaceId) {
       throw new Error("Space not found");
     }
 
-    // Return setups or empty array if no setups found
-    return space.setups || [];
+    // Map and clean up the setups data
+    const cleanSetups = (space.setups || []).map((setup) => {
+      // Find device names
+      const conditionDevice = space.devices.find(
+        (device) => device.device_id === setup.condition.device_id
+      );
+
+      const cleanActions = setup.condition.actions.map((action) => {
+        const actionDevice = space.devices.find(
+          (device) => device.device_id === action.device_id
+        );
+        return {
+          device_id: action.device_id,
+          device_name: actionDevice?.device_name || "Unknown Device",
+          set_status: action.set_status,
+          delay: action.delay || 0,
+        };
+      });
+
+      // Return cleaned setup object
+      return {
+        id: setup._id.toString(),
+        name: setup.name,
+        description: setup.description || "",
+        condition: {
+          device_id: setup.condition.device_id,
+          device_name: conditionDevice?.device_name || "Unknown Device",
+          device_type: setup.condition.device_type,
+          level: setup.condition.level,
+          operator: setup.condition.operator,
+          actions: cleanActions,
+        },
+        active: setup.active,
+        created_at: setup.created_at,
+        updated_at: setup.updated_at,
+      };
+    });
+
+    logger.info(`Retrieved ${cleanSetups.length} setups for space ${spaceId}`);
+    return cleanSetups;
   } catch (error) {
     logger.error(`Error getting setups: ${error.message}`);
     throw error;

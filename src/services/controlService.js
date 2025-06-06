@@ -91,3 +91,96 @@ export async function setting(client, deviceid, payload) {
     throw new Error(`MQTT Publish Failed: ${error.message}`);
   }
 }
+
+export async function slaveRequest(req, res) {
+  const client = req.app.locals.dbClient;
+  console.log("DB client:", !!client);
+  console.log("Authenticated user:", req.user);
+  console.log("🚀 SLAVE REQUEST ENDPOINT REACHED");
+
+  try {
+    const { deviceid } = req.body;
+
+    if (!deviceid) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Missing deviceid in request" 
+      });
+    }
+
+    const result = await client.query(
+      "SELECT thingid FROM sensor_data WHERE deviceid = $1 LIMIT 1",
+      [deviceid]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: "DeviceId not found" 
+      });
+    }
+
+    const thingid = result.rows[0].thingid;
+    const requestTopic = `mqtt/device/${thingid}/slave_request`;
+
+    const payload = JSON.stringify({
+      ...req.body
+    });
+
+    // 1. Publish using AWS IoT Core
+    await iotData.publish({
+      topic: requestTopic,
+      payload,
+      qos: 0
+    }).promise();
+    console.log("✅ Payload published to:", requestTopic);
+
+    // 2. Poll database for response
+    const waitForResponse = async () => {
+      const maxWait = 5000; // 5 seconds timeout
+      const interval = 500; // poll every 0.5 seconds
+      const startTime = Date.now();
+
+      while (Date.now() - startTime < maxWait) {
+        const responseQuery = await client.query(
+          `SELECT * FROM slave_response
+           WHERE thingid = $1
+             AND inserted_at >= NOW() - INTERVAL '10 seconds'
+           ORDER BY inserted_at DESC
+           LIMIT 1`,
+          [thingid]
+        );
+
+        if (responseQuery.rowCount > 0) {
+          console.log("✅ Response received from DB");
+          return responseQuery.rows[0];
+        }
+
+        console.log("⏳ Waiting for response...");
+        await new Promise(resolve => setTimeout(resolve, interval));
+      }
+
+      throw new Error("Timeout waiting for MQTT response in DB");
+    };
+
+    const response = await waitForResponse();
+
+    return res.status(200).json({ 
+      success: true,
+      message: "Published and response received", 
+      topic: requestTopic,
+      data: {
+        ...response,
+      },
+      user: req.user.mobile_number
+    });
+
+  } catch (error) {
+    console.error("slaveRequest error:", error);
+    return res.status(500).json({ 
+      success: false,
+      error: "Internal Server Error", 
+      details: error.message 
+    });
+  }
+}

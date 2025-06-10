@@ -171,6 +171,7 @@ export async function slaveRequest(req, res) {
       topic: requestTopic,
       data: {
         ...response,
+        channel: parseInt(response.channel)
       },
       user: req.user.mobile_number
     });

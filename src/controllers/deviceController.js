@@ -14,22 +14,45 @@ export const getAllDevices = async (req, res) => {
       });
     }
 
-    const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
+const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
 
-    // Filter devices by type if specified
-    const filteredDevices = type
-      ? devices.filter((device) => device.device_type === type)
-      : devices;
+// Optional type filter
+const filteredDevices = type
+  ? devices.filter((device) => device.device_type === type)
+  : devices;
 
-    // Ensure that devices is always returned as an array
-    return res.status(200).json({
-      success: true,
-      data: Array.isArray(filteredDevices)
-        ? filteredDevices
-        : filteredDevices
-        ? [filteredDevices]
-        : [],
-    });
+const responseData = [];
+
+for (const device of filteredDevices) {
+  if (device.device_type === "base") {
+    // BM1 array
+    responseData.push([
+      {
+        ...device,
+        switch_no: "BM1",
+        status: device.status || "off"
+      }
+    ]);
+    // BM2 array
+    responseData.push([
+      {
+        ...device,
+        switch_no: "BM2",
+        status: "off"
+      }
+    ]);
+  } else {
+    // tank or other devices - single entry only
+    responseData.push([device]);
+  }
+}
+
+return res.status(200).json({
+  success: true,
+  data: responseData
+});
+
+
   } catch (error) {
     // Determine appropriate status code based on error
     let statusCode = 500;

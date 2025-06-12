@@ -72,6 +72,41 @@ export const createSetup = async (req, res) => {
       }
     }
 
+
+      if (setupData.condition.maximum !== undefined) {
+        if (typeof setupData.condition.maximum !== 'number' || 
+            setupData.condition.maximum < 0 || 
+            setupData.condition.maximum > 100) {
+          return res.status(400).json({
+            success: false,
+            message: "Maximum must be a number between 0 and 100",
+          });
+        }
+      }
+
+      // NEW: Validate minimum parameter (optional)
+      if (setupData.condition.minimum !== undefined) {
+        if (typeof setupData.condition.minimum !== 'number' || 
+            setupData.condition.minimum < 0 || 
+            setupData.condition.minimum > 100) {
+          return res.status(400).json({
+            success: false,
+            message: "Minimum must be a number between 0 and 100",
+          });
+        }
+      }
+
+      // NEW: Validate that minimum < maximum if both are provided
+      if (setupData.condition.minimum !== undefined && 
+          setupData.condition.maximum !== undefined) {
+        if (setupData.condition.minimum >= setupData.condition.maximum) {
+          return res.status(400).json({
+            success: false,
+            message: "Minimum must be less than maximum",
+          });
+        }
+      }
+
     // For base devices, validate status
     if (setupData.condition.device_type === "base") {
       if (!setupData.condition.status) {
@@ -325,6 +360,41 @@ export const updateSetup = async (req, res) => {
           });
         }
       }
+
+      if (setupData.condition.maximum !== undefined) {
+          if (typeof setupData.condition.maximum !== 'number' || 
+              setupData.condition.maximum < 0 || 
+              setupData.condition.maximum > 100) {
+            return res.status(400).json({
+              success: false,
+              message: "Maximum must be a number between 0 and 100",
+            });
+          }
+        }
+
+        // NEW: Validate minimum parameter in updates
+        if (setupData.condition.minimum !== undefined) {
+          if (typeof setupData.condition.minimum !== 'number' || 
+              setupData.condition.minimum < 0 || 
+              setupData.condition.minimum > 100) {
+            return res.status(400).json({
+              success: false,
+              message: "Minimum must be a number between 0 and 100",
+            });
+            }
+        }
+
+        // NEW: Cross-validation in updates
+        if (setupData.condition.minimum !== undefined && 
+            setupData.condition.maximum !== undefined) {
+          if (setupData.condition.minimum >= setupData.condition.maximum) {
+            return res.status(400).json({
+              success: false,
+              message: "Minimum must be less than maximum",
+            });
+          }
+        }
+
 
       // For base devices
       if (setupData.condition.device_type === "base") {

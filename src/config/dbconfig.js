@@ -64,6 +64,48 @@ const conditionSchema = new mongoose.Schema({
       message: "Tank level threshold must be between 0 and 100",
     },
   },
+  minimum: {
+    type: Number,
+    min: 0,
+    max: 100,
+    required: function() {
+      return this.device_type === "tank"; // Only required for tank devices
+    },
+    default: function() {
+      return this.device_type === "tank" ? 20 : undefined;
+    },
+    validate: {
+      validator: function(value) {
+        if (this.device_type === "tank") {
+          return value >= 0 && value <= 100;
+        }
+        return true;
+      },
+      message: "Minimum value must be between 0 and 100"
+    }
+  },
+   maximum: {
+    type: Number,
+    min: 0,
+    max: 100,
+    required: function() {
+      return this.device_type === "tank"; // Only required for tank devices
+    },
+    default: function() {
+      return this.device_type === "tank" ? 90 : undefined;
+    },
+    validate: {
+      validator: function(value) {
+        if (this.device_type === "tank") {
+          const minValue = this.minimum;
+          return value >= 0 && value <= 100 && (!minValue || value > minValue);
+        }
+        return true;
+      },
+      message: "Maximum value must be between 0 and 100 and greater than minimum"
+    }
+  },
+
   operator: {
     type: String,
     enum: ["<", ">", "<=", ">=", "=="],

@@ -57,20 +57,22 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     }
 
     if (conditionDevice.device_type === "tank") {
-      if (
-        setupData.condition.level === undefined ||
-        setupData.condition.level < 0 ||
-        setupData.condition.level > 100
-      ) {
-        throw new Error(
-          "Level field is required and must be between 0 and 100 for tank devices"
-        );
+      // Validate maximum parameter
+      if (typeof setupData.condition.maximum !== 'number' || 
+          setupData.condition.maximum < 0 || 
+          setupData.condition.maximum > 100) {
+        throw new Error("Maximum must be a number between 0 and 100 for tank devices");
       }
-      if (
-        !setupData.condition.operator ||
-        !["<", ">", "<=", ">=", "=="].includes(setupData.condition.operator)
-      ) {
-        throw new Error("Valid operator is required for tank level comparison");
+
+      // Validate minimum parameter
+      if (typeof setupData.condition.minimum !== 'number' || 
+          setupData.condition.minimum < 0 || 
+          setupData.condition.minimum > 100) {
+        throw new Error("Minimum must be a number between 0 and 100 for tank devices");
+      }
+
+      if (setupData.condition.minimum >= setupData.condition.maximum) {
+        throw new Error("Minimum must be less than maximum");
       }
     }
 
@@ -115,23 +117,18 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
     user.spaces[spaceIndex].setups.push(newSetup);
 
-    // ✅ MQTT Publish Payload Logic
-    const mqttPayload = {
-      deviceid: conditionDevice.device_id,
-      sensor_no: conditionDevice.sensor_no || "TM1",
-      switch_no: conditionDevice.switch_no || "BM1",
-      maximum:
-        ["<", "<="].includes(setupData.condition.operator) &&
-        setupData.condition.level !== undefined
-          ? setupData.condition.level
-          : 95,
-      minimum:
-        [">", ">="].includes(setupData.condition.operator) &&
-        setupData.condition.level !== undefined
-          ? setupData.condition.level
-          : 30,
-    };
-    setting(client,setupData.condition.actions[0].device_id,mqttPayload);
+    if (setupData.device_type == "tank")
+    {
+      // ✅ MQTT Publish Payload Logic
+      const mqttPayload = {
+        deviceid: conditionDevice.device_id,
+        sensor_no: conditionDevice.sensor_no || "TM1",
+        switch_no: conditionDevice.switch_no || "BM1",
+        maximum:  setupData.condition.maximum,
+        minimum:  setupData.condition.minimum
+      };
+      setting(client,setupData.condition.actions[0].device_id,mqttPayload);
+    }
     // Save changes
     await user.save();
 
@@ -189,8 +186,9 @@ export async function getSetups(mobileNumber, spaceId) {
           device_id: setup.condition.device_id,
           device_name: conditionDevice?.device_name || "Unknown Device",
           device_type: setup.condition.device_type,
-          level: setup.condition.level,
-          operator: setup.condition.operator,
+          status: setup.condition.status, // for base devices
+          maximum: setup.condition.maximum,
+          minimum: setup.condition.minimum,
           actions: cleanActions,
         },
         active: setup.active,
@@ -307,23 +305,22 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
           );
         }
       } else if (conditionDevice.device_type === "tank") {
-        if (
-          setupData.condition.level === undefined ||
-          setupData.condition.level < 0 ||
-          setupData.condition.level > 100
-        ) {
-          throw new Error(
-            "Level field is required and must be between 0 and 100 for tank devices"
-          );
+        // Validate maximum parameter
+        if (typeof setupData.condition.maximum !== 'number' || 
+            setupData.condition.maximum < 0 || 
+            setupData.condition.maximum > 100) {
+          throw new Error("Maximum must be a number between 0 and 100 for tank devices");
         }
 
-        if (
-          !setupData.condition.operator ||
-          !["<", ">", "<=", ">=", "=="].includes(setupData.condition.operator)
-        ) {
-          throw new Error(
-            "Valid operator is required for tank level comparison"
-          );
+        // Validate minimum parameter
+        if (typeof setupData.condition.minimum !== 'number' || 
+            setupData.condition.minimum < 0 || 
+            setupData.condition.minimum > 100) {
+          throw new Error("Minimum must be a number between 0 and 100 for tank devices");
+        }
+
+        if (setupData.condition.minimum >= setupData.condition.maximum) {
+          throw new Error("Minimum must be less than maximum");
         }
       }
 

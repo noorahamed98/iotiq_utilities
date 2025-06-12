@@ -117,7 +117,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
     user.spaces[spaceIndex].setups.push(newSetup);
 
-    if (setupData.device_type == "tank")
+    if (setupData.condition.device_type == "tank")
     {
       // ✅ MQTT Publish Payload Logic
       const mqttPayload = {

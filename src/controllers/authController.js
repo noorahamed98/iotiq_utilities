@@ -88,7 +88,7 @@ export async function signinVerifyOTP(req, res) {
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
         expires: refreshTokenExpiry,
-        path: "/refresh-token", // Restrict to refresh token endpoint
+        // Restrict to refresh token endpoint
       });
     }
 
@@ -245,8 +245,7 @@ export async function signupVerifyOTP(req, res) {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
-        expires: refreshTokenExpiry,
-        path: "/refresh-token", // Restrict to refresh token endpoint
+        expires: refreshTokenExpiry, // Restrict to refresh token endpoint
       });
     }
 
@@ -341,7 +340,13 @@ export async function signupResendOTP(req, res) {
 export async function refreshToken(req, res) {
   try {
     // Get refresh token from cookie or request body
-    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    const refreshToken = 
+      req.cookies?.refreshToken || 
+      req.body.refreshToken || 
+      req.headers['x-refresh-token'] ||  // Support custom header
+      (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') 
+        ? req.headers.authorization.substring(7) 
+        : null);
 
     if (!refreshToken) {
       return res.status(401).json({
@@ -434,7 +439,7 @@ export async function logout(req, res) {
 
     // Clear cookies
     res.clearCookie("accessToken");
-    res.clearCookie("refreshToken", { path: "/refresh-token" });
+    res.clearCookie("refreshToken");
 
     return res.status(200).json({
       success: true,

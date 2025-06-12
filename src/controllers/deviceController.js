@@ -14,22 +14,45 @@ export const getAllDevices = async (req, res) => {
       });
     }
 
-    const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
+const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
 
-    // Filter devices by type if specified
-    const filteredDevices = type
-      ? devices.filter((device) => device.device_type === type)
-      : devices;
+// Optional type filter
+const filteredDevices = type
+  ? devices.filter((device) => device.device_type === type)
+  : devices;
 
-    // Ensure that devices is always returned as an array
-    return res.status(200).json({
-      success: true,
-      data: Array.isArray(filteredDevices)
-        ? filteredDevices
-        : filteredDevices
-        ? [filteredDevices]
-        : [],
-    });
+const responseData = [];
+
+for (const device of filteredDevices) {
+  if (device.device_type === "base") {
+    // BM1 array
+    responseData.push([
+      {
+        ...device,
+        switch_no: "BM1",
+        status: device.status || "off"
+      }
+    ]);
+    // BM2 array
+    responseData.push([
+      {
+        ...device,
+        switch_no: "BM2",
+        status: "off"
+      }
+    ]);
+  } else {
+    // tank or other devices - single entry only
+    responseData.push([device]);
+  }
+}
+
+return res.status(200).json({
+  success: true,
+  data: responseData
+});
+
+
   } catch (error) {
     // Determine appropriate status code based on error
     let statusCode = 500;
@@ -124,6 +147,51 @@ export const getAllUserDevices = async (req, res) => {
   }
 };
 
+// Check device availability before adding
+export const checkDeviceAvailability = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { thingName } = req.query; // Optional thing name check
+
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: "Device ID is required",
+      });
+    }
+
+    const availability = await deviceService.checkDeviceAvailability(
+      deviceId,
+      thingName
+    );
+
+    if (availability.available) {
+      return res.status(200).json({
+        success: true,
+        available: true,
+        message: "Device is available for registration",
+      });
+    } else {
+      return res.status(409).json({
+        success: false,
+        available: false,
+        message: `Device is already registered to another ${
+          availability.currentOwner.mobile_number === req.user.mobile_number
+            ? "space"
+            : "account"
+        }`,
+        currentOwner: availability.currentOwner,
+        device: availability.device,
+      });
+    }
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to check device availability",
+    });
+  }
+};
+
 // Add a base device to a space
 export const addDevice = async (req, res) => {
   try {
@@ -187,10 +255,63 @@ export const addDevice = async (req, res) => {
     ) {
       statusCode = 404;
     }
-    if (error.message.includes("already exists")) {
+    if (error.message.includes("already exists") || 
+        error.message.includes("already registered")) {
       statusCode = 409; // Conflict
     }
     if (error.message.includes("required")) {
+      statusCode = 400;
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Transfer device between spaces within the same account
+export const transferDevice = async (req, res) => {
+  try {
+    const { mobile_number } = req.user;
+    const { fromSpaceId, toSpaceId, deviceId } = req.params;
+
+    if (!fromSpaceId || !toSpaceId || !deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: "Source space ID, destination space ID, and device ID are required",
+      });
+    }
+
+    if (fromSpaceId === toSpaceId) {
+      return res.status(400).json({
+        success: false,
+        message: "Source and destination spaces cannot be the same",
+      });
+    }
+
+    const result = await deviceService.transferDevice(
+      mobile_number,
+      fromSpaceId,
+      toSpaceId,
+      deviceId
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: result.device,
+      message: result.message,
+    });
+  } catch (error) {
+    let statusCode = 500;
+    if (
+      error.message === "User not found" ||
+      error.message.includes("space not found") ||
+      error.message === "Device not found in source space"
+    ) {
+      statusCode = 404;
+    }
+    if (error.message.includes("Cannot transfer")) {
       statusCode = 400;
     }
 
@@ -310,7 +431,8 @@ export const addTankDevice = async (req, res) => {
     ) {
       statusCode = 404;
     }
-    if (error.message.includes("already exists")) {
+    if (error.message.includes("already exists") || 
+        error.message.includes("already registered")) {
       statusCode = 409; // Conflict
     }
     if (error.message.includes("required")) {

@@ -124,8 +124,9 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
         deviceid: conditionDevice.device_id,
         sensor_no: conditionDevice.sensor_no || "TM1",
         switch_no: conditionDevice.switch_no || "BM1",
-        maximum:  setupData.condition.maximum,
-        minimum:  setupData.condition.minimum
+        maximum: setupData.condition.maximum.toString(),
+        minimum: setupData.condition.minimum.toString()
+
       };
       setting(client,setupData.condition.actions[0].device_id,mqttPayload);
     }

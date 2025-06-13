@@ -1,7 +1,7 @@
 import AWS from "aws-sdk";
 
 const iotData = new AWS.IotData({
-  endpoint: process.env.IOT_ENDPOINT || "a34dc4u8qfki7y-ats.iot.ap-south-1.amazonaws.com",
+  endpoint: process.env.IOT_ENDPOINT,
   region: "ap-south-1",
 });
 
@@ -182,6 +182,108 @@ export async function slaveRequest(req, res) {
       success: false,
       error: "Internal Server Error", 
       details: error.message 
+    });
+  }
+}
+
+export async function isBaseResponded(req, res) {
+  const { deviceid } = req.params;
+  const client = req.app.locals.dbClient;
+
+  if (!deviceid) {
+    return res.status(400).json({ success: false, message: 'Device ID is required.' });
+  }
+
+  const startTime = Date.now();
+  const maxWait = 5000; // 10 seconds
+  const pollInterval = 1000; // check every 1 second
+
+  try {
+    while (Date.now() - startTime < maxWait) {
+      const responseQuery = await client.query(
+        `SELECT * FROM tank_data
+         WHERE deviceid = $1
+           AND message_type = 'alive_reply'
+           AND timestamp >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') - INTERVAL '10 seconds'
+         ORDER BY timestamp DESC
+         LIMIT 1`,
+        [deviceid]
+      );
+
+      if (responseQuery.rows.length > 0) {
+        return res.status(200).json({
+          success: true,
+          message: deviceid+'Base responded successfully.'
+        });
+      }
+
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    // Timed out with no response
+    return res.status(404).json({
+      success: false,
+      message: deviceid+'Base is not responded.'
+    });
+
+  } catch (error) {
+    console.error('Error checking base response:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
+    });
+  }
+}
+
+
+export async function isTankResponded(req, res) {
+  const { deviceid,sensorNumber } = req.params;
+  const client = req.app.locals.dbClient;
+
+  if (!deviceid || !sensorNumber) {
+    return res.status(400).json({ success: false, message: 'Device ID and Sensor Number is required.' });
+  }
+
+  const startTime = Date.now();
+  const maxWait = 10000; // 10 seconds
+  const pollInterval = 1000; // check every 1 second
+
+  try {
+    while (Date.now() - startTime < maxWait) {
+      const responseQuery = await client.query(
+        `SELECT * FROM tank_data
+         WHERE deviceid = $1 
+           AND sensor_no = $2
+           AND message_type = 'update'
+           AND timestamp >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') - INTERVAL '10 seconds'
+         ORDER BY timestamp DESC
+         LIMIT 1`,
+        [deviceid,sensorNumber]
+      );
+      console.log(responseQuery.rows)
+      if (responseQuery.rows.length > 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'Tank responded successfully.'
+        });
+      }
+
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+
+    // Timed out with no response
+    return res.status(404).json({
+      success: false,
+      message: deviceid+'Tank is not responded.'
+    });
+
+  } catch (error) {
+    console.error('Error checking base response:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
     });
   }
 }

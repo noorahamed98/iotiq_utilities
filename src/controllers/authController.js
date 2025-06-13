@@ -9,6 +9,7 @@ import {
   resendSignInOTP,
   resendSignUpOTP,
 } from "../services/authService.js";
+import { User } from "../config/dbconfig.js";
 
 // Part 1: Initiate sign-in and send OTP via WhatsApp
 export async function signinInitiate(req, res) {
@@ -461,33 +462,42 @@ export async function logout(req, res) {
  */
 export async function getUser(req, res) {
   try {
-    const user = req.user;
-    
-    if (!user) {
+    const mobileNumber = req.user?.mobile_number;
+
+    if (!mobileNumber) {
       return res.status(401).json({
         success: false,
         message: 'Authentication required'
       });
     }
 
-    // Format spaces data
-    const spaces = (user.spaces || []).map(space => ({
-      space_id: space._id?.toString(),
-      space_name: space.space_name || 'Unnamed Space',
-      devices: {
-        total: space.devices?.length || 0,
-        base: space.devices?.filter(d => d.device_type === 'base').length || 0,
-        tank: space.devices?.filter(d => d.device_type === 'tank').length || 0
-      }
-    }));
+    // Fetch complete user data from database
+    const user = await User.findOne({ mobile_number: mobileNumber })
+      .select('-password -refreshToken -otp_record')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
     const userData = {
-      user_id: user._id?.toString(),
+      id: user._id.toString(), // Now we have the actual MongoDB _id
       user_name: user.user_name || '',
       mobile_number: user.mobile_number,
       country_code: user.country_code || '+91',
-      spaces_count: spaces.length,
-      spaces: spaces,
+      spaces_count: user.spaces?.length || 0,
+      spaces: user.spaces?.map(space => ({
+        space_id: space._id.toString(),
+        space_name: space.space_name,
+        devices: {
+          total: space.devices?.length || 0,
+          base: space.devices?.filter(d => d.device_type === 'base').length || 0,
+          tank: space.devices?.filter(d => d.device_type === 'tank').length || 0
+        }
+      })) || [],
       created_at: user.createdAt || new Date(),
       last_login: user.lastLogin || user.createdAt || new Date(),
       is_active: !!user.isActive

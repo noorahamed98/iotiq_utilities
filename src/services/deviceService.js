@@ -261,6 +261,18 @@ if (connectedTanks.length >= 4) {
   );
 }
 
+const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);
+const availableSlaveNames = ['TM1', 'TM2', 'TM3', 'TM4'].filter(
+  slaveName => !usedSlaveNames.includes(slaveName)
+);
+
+// Automatically assign the first available slave name
+const autoAssignedSlaveName = availableSlaveNames[0];
+
+// Override the slave_name in tankData
+tankData.slave_name = autoAssignedSlaveName;
+
+logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankData.device_id}`);
     // Check if tank device exists globally
     const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
 
@@ -332,32 +344,31 @@ if (connectedTanks.length >= 4) {
           "slaveRequest"
         );
         const slaveRequestMessage = {
-          deviceid: baseDeviceId,
-          sensor_no: tankData.slave_name,
-          slaveid: tankData.device_id,
+           deviceid: baseDeviceId,
+      sensor_no: autoAssignedSlaveName, // Use auto-assigned name instead of tankData.slave_name
+      slaveid: tankData.device_id,
         };
 
         // For "without_wifi" mode, add additional parameters
         if (tankData.connection_type === "without_wifi") {
-          slaveRequestMessage.mode = 3;
-          slaveRequestMessage.channel = tankData.channel;
-          slaveRequestMessage.address_l = tankData.address_l;
-          slaveRequestMessage.address_h = tankData.address_h;
-          slaveRequestMessage.slave_name = tankData.slave_name;
-        }
-
-        // Send MQTT message to base device to connect to tank
-        publish(slaveRequestTopic, slaveRequestMessage);
-        logger.info(
-          `Sent slave request for tank ${tankData.device_id} to base ${baseDeviceId}`
-        );
-      } catch (mqttError) {
-        logger.error(
-          `Error sending slave request via MQTT: ${mqttError.message}`
-        );
-        // Continue process, don't fail if MQTT fails
-      }
+      slaveRequestMessage.mode = 3;
+      slaveRequestMessage.channel = tankData.channel;
+      slaveRequestMessage.address_l = tankData.address_l;
+      slaveRequestMessage.address_h = tankData.address_h;
+      slaveRequestMessage.slave_name = autoAssignedSlaveName; // Use auto-assigned name
     }
+        // Send MQTT message to base device to connect to tank
+ publish(slaveRequestTopic, slaveRequestMessage);
+    logger.info(
+      `Sent slave request for tank ${tankData.device_id} with slave name ${autoAssignedSlaveName} to base ${baseDeviceId}`
+    );
+  } catch (mqttError) {
+    logger.error(
+      `Error sending slave request via MQTT: ${mqttError.message}`
+    );
+    // Continue process, don't fail if MQTT fails
+  }
+}
 
     return newTankDevice;
   } catch (error) {

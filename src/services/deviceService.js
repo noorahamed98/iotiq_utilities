@@ -246,6 +246,21 @@ export async function addTankDevice(
       throw new Error("Base device not found or is not a base model");
     }
 
+    const connectedTanks = user.spaces[spaceIndex].devices.filter(
+  (device) => 
+    device.device_type === "tank" && 
+    device.parent_device_id === baseDeviceId
+);
+
+if (connectedTanks.length >= 4) {
+  // Create a helpful error message with connected tank names
+  const tankNames = connectedTanks.map(tank => tank.device_name).join(', ');
+  throw new Error(
+    `Base device '${baseDevice.device_name}' already has 4 tanks connected (${tankNames}). ` +
+    `Please unassign one of the existing tanks before adding a new one. Maximum 4 tanks per base device allowed.`
+  );
+}
+
     // Check if tank device exists globally
     const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
 
@@ -593,3 +608,4 @@ export async function updateDeviceStatus(
     throw error;
   }
 }
+

@@ -502,3 +502,54 @@ export const updateDeviceStatus = async (req, res) => {
     });
   }
 };
+
+// Add this new function to deviceController.js
+export const getBaseDeviceCapacity = async (req, res) => {
+  try {
+    const { mobile_number } = req.user;
+    const { spaceId, baseDeviceId } = req.params;
+
+    if (!spaceId || !baseDeviceId) {
+      return res.status(400).json({
+        success: false,
+        message: "Space ID and Base Device ID are required",
+      });
+    }
+
+    const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
+    
+    // Find the base device
+    const baseDevice = devices.find(d => d.device_id === baseDeviceId && d.device_type === "base");
+    if (!baseDevice) {
+      return res.status(404).json({
+        success: false,
+        message: "Base device not found",
+      });
+    }
+
+    // Count connected tanks
+    const connectedTanks = devices.filter(d => 
+      d.device_type === "tank" && d.parent_device_id === baseDeviceId
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        base_device: baseDevice,
+        connected_tanks: connectedTanks.length,
+        max_capacity: 4,
+        available_slots: 4 - connectedTanks.length,
+        tank_details: connectedTanks.map(tank => ({
+          device_id: tank.device_id,
+          device_name: tank.device_name,
+          slave_name: tank.slave_name
+        }))
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get base device capacity",
+    });
+  }
+};

@@ -9,8 +9,9 @@ import {
   logout,
   signinResendOTP,
   signupResendOTP,
+  getUser,
 } from "../controllers/authController.js";
-import { refreshTokenMiddleware } from "../middlewares/authMiddleware.js";
+import { refreshTokenMiddleware, authenticateToken } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
@@ -29,5 +30,8 @@ router.post("/refresh-token", refreshTokenMiddleware, refreshToken);
 
 // Logout endpoint
 router.post("/logout", logout);
+
+// Get authenticated user details
+router.get("/user", authenticateToken, getUser);
 
 export default router;

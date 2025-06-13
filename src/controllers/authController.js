@@ -453,3 +453,56 @@ export async function logout(req, res) {
     });
   }
 }
+
+/**
+ * Get authenticated user details
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
+export async function getUser(req, res) {
+  try {
+    const user = req.user;
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    // Format spaces data
+    const spaces = (user.spaces || []).map(space => ({
+      space_id: space._id?.toString(),
+      space_name: space.space_name || 'Unnamed Space',
+      devices: {
+        total: space.devices?.length || 0,
+        base: space.devices?.filter(d => d.device_type === 'base').length || 0,
+        tank: space.devices?.filter(d => d.device_type === 'tank').length || 0
+      }
+    }));
+
+    const userData = {
+      user_id: user._id?.toString(),
+      user_name: user.user_name || '',
+      mobile_number: user.mobile_number,
+      country_code: user.country_code || '+91',
+      spaces_count: spaces.length,
+      spaces: spaces,
+      created_at: user.createdAt || new Date(),
+      last_login: user.lastLogin || user.createdAt || new Date(),
+      is_active: !!user.isActive
+    };
+
+    return res.json({
+      success: true,
+      data: userData
+    });
+
+  } catch (error) {
+    console.error('Error getting user:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve user details'
+    });
+  }
+}

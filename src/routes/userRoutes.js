@@ -5,7 +5,7 @@ import {
   getUsers,
   getUser,
   removeUser,
-  reactivateUserController
+  reactivateUserController,
 } from "../controllers/userController.js";
 import { authenticateToken } from "../middlewares/authMiddleware.js"; // Assuming you have auth middleware
 
@@ -52,5 +52,7 @@ router.delete("/user/:identifier", authenticateToken, removeUser);
  * @query {string} type - Identifier type 'mobile' or 'id' (default: 'mobile')
  */
 router.patch("/user/:identifier/reactivate", authenticateToken, reactivateUserController);
+
+
 
 export default router;

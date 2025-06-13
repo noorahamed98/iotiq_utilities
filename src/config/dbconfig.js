@@ -109,7 +109,18 @@ const conditionSchema = new mongoose.Schema({
   operator: {
     type: String,
     enum: ["<", ">", "<=", ">=", "=="],
-    required: [true, "Comparison operator is required"],
+    required: function() {
+      return this.device_type === "tank"; // Only required for tank devices
+    },
+    validate: {
+      validator: function(value) {
+        if (this.device_type === "tank") {
+          return ["<", ">", "<=", ">=", "=="].includes(value);
+        }
+        return true; // Skip validation for base devices
+      },
+      message: "Valid operator is required for tank devices"
+    }
   },
   actions: [actionSchema],
 });

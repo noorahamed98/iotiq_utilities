@@ -213,7 +213,7 @@ export async function isBaseResponded(req, res) {
       if (responseQuery.rows.length > 0) {
         return res.status(200).json({
           success: true,
-          message: deviceid+'Base responded successfully.'
+          message: 'Base responded successfully.'
         });
       }
 
@@ -224,7 +224,7 @@ export async function isBaseResponded(req, res) {
     // Timed out with no response
     return res.status(404).json({
       success: false,
-      message: deviceid+'Base is not responded.'
+      message: 'Base is not responded.'
     });
 
   } catch (error) {
@@ -276,7 +276,7 @@ export async function isTankResponded(req, res) {
     // Timed out with no response
     return res.status(404).json({
       success: false,
-      message: deviceid+'Tank is not responded.'
+      message: 'Tank is not responded.'
     });
 
   } catch (error) {

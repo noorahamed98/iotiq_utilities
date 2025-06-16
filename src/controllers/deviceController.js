@@ -235,17 +235,45 @@ export const addDevice = async (req, res) => {
       });
     }
 
-    const newDevice = await deviceService.addDevice(
-      mobile_number,
-      spaceId,
-      deviceData
-    );
 
-    return res.status(201).json({
-      success: true,
-      data: newDevice,
-      message: "Device added successfully",
-    });
+
+  const newDevice = await deviceService.addDevice(
+  mobile_number,
+  spaceId,
+  deviceData
+);
+
+let responseData = [];
+
+if (newDevice.device_type === "base") {
+  const baseClone = newDevice.toObject?.() || newDevice;
+
+  // ❗️Remove switch_no from baseClone to avoid conflict
+  delete baseClone.switch_no;
+
+  const bm1 = { ...baseClone, switch_no: "BM1" };
+  const bm2 = { ...baseClone, switch_no: "BM2" };
+
+  // Set status based on the one actually stored in DB
+  if (newDevice.switch_no === "BM1") {
+    bm1.status = newDevice.status;
+    bm2.status = "off";
+  } else {
+    bm1.status = "off";
+    bm2.status = newDevice.status;
+  }
+
+  responseData = [[bm1], [bm2]];
+} else {
+  responseData = [[newDevice]];
+}
+
+return res.status(201).json({
+  success: true,
+  data: responseData,
+  message: "Device added successfully",
+});
+
   } catch (error) {
     // Determine appropriate status code based on error
     let statusCode = 500;

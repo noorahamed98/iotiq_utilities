@@ -165,6 +165,15 @@ const deviceSchema = new mongoose.Schema(
       type: String,
       required: [true, "Device name is required"],
     },
+
+    switch_no: {
+  type: String,
+  enum: ["BM1", "BM2"],
+  required: function () {
+    return this.device_type === "base";
+  }
+},
+
     connection_type: {
       type: String,
       required: [true, "Connection type is required"],

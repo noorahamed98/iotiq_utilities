@@ -155,66 +155,80 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
 
   // Check if device exists globally
   const globalCheck = await checkDeviceExistsGlobally(
-    deviceData.device_id, 
+    deviceData.device_id,
     deviceData.thing_name
   );
 
   if (globalCheck.exists) {
-    // Check if it's the same user trying to add to a different space
     if (globalCheck.user.mobile_number === mobileNumber) {
       throw new Error(
-        `Device '${deviceData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first before adding to another space.`
+        `Device '${deviceData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first.`
       );
     } else {
       throw new Error(
-        `Device '${deviceData.device_id}' is already registered to another account. Each device can only be registered to one account at a time.`
+        `Device '${deviceData.device_id}' is already registered to another account.`
       );
     }
   }
 
-  // For wifi connection, ensure ssid and password are provided
   if (deviceData.connection_type === "wifi") {
     if (!deviceData.ssid || !deviceData.password) {
       throw new Error("SSID and password are required for WiFi devices");
     }
   }
 
-  // Set thing_name if not provided (defaults to device_id for base models)
+  // Set thing_name if not provided
   if (!deviceData.thing_name && deviceData.device_type === "base") {
     deviceData.thing_name = deviceData.device_id;
   }
 
-  // Add device to the space
-  user.spaces[spaceIndex].devices.push(deviceData);
+  // ✅ AUTO-ASSIGN switch_no
+  // ✅ Assign switch_no only for base devices
+if (deviceData.device_type === "base") {
+  const currentDevices = user.spaces[spaceIndex].devices;
 
-  // Save the updated user document
+  const existingSwitches = currentDevices
+    .filter((d) => d.device_type === "base")
+    .map((d) => d.switch_no);
+
+  const available = ["BM1", "BM2"].find(
+    (sw) => !existingSwitches.includes(sw)
+  );
+
+  if (!available) {
+    throw new Error("Maximum 2 base devices already assigned in this space");
+  }
+
+  deviceData.switch_no = available;
+  console.log("✅ Assigned switch:", available);
+}
+
+
+  user.spaces[spaceIndex].devices.push(deviceData);
   await user.save();
 
-  // If device is connected via WiFi, send MQTT configuration
+  const newDevice =
+    user.spaces[spaceIndex].devices[user.spaces[spaceIndex].devices.length - 1];
+
+  // Send config over MQTT
   if (deviceData.connection_type === "wifi" && deviceData.thing_name) {
     try {
-      // Send configuration to device via MQTT
-      const configTopic = getTopic("config", deviceData.thing_name, "config");
-      const configMessage = {
+      const topic = getTopic("config", deviceData.thing_name, "config");
+      const message = {
         deviceid: deviceData.device_id,
         ssid: deviceData.ssid,
         password: deviceData.password,
-        mode: deviceData.connection_type === "wifi" ? 1 : 3,
+        mode: 1
       };
-
-      publish(configTopic, configMessage);
-      logger.info(`Sent configuration to device ${deviceData.device_id}`);
-    } catch (mqttError) {
-      logger.error(`Error sending MQTT configuration: ${mqttError.message}`);
-      // Continue process, don't fail if MQTT fails
+      publish(topic, message);
+    } catch (e) {
+      console.error("MQTT error:", e.message);
     }
   }
 
-  // Return the newly added device
-  return user.spaces[spaceIndex].devices[
-    user.spaces[spaceIndex].devices.length - 1
-  ];
+  return newDevice;
 }
+
 
 // Add a tank device to a space and connect to base device
 export async function addTankDevice(

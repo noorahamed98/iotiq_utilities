@@ -25,25 +25,18 @@ const responseData = [];
 
 for (const device of filteredDevices) {
   if (device.device_type === "base") {
-    // BM1 array
-    responseData.push([
-      {
-        ...device,
-        switch_no: "BM1",
-        status: device.status || "off"
-      }
-    ]);
-    // BM2 array
-    responseData.push([
-      {
-        ...device,
-        switch_no: "BM2",
-        status: "off"
-      }
-    ]);
+    responseData.push({
+      ...device,
+      switch_no: "BM1",
+      status: device.status || "off"
+    });
+    responseData.push({
+      ...device,
+      switch_no: "BM2",
+      status: "off"
+    });
   } else {
-    // tank or other devices - single entry only
-    responseData.push([device]);
+    responseData.push(device);
   }
 }
 
@@ -51,6 +44,7 @@ return res.status(200).json({
   success: true,
   data: responseData
 });
+
 
 
   } catch (error) {
@@ -266,7 +260,7 @@ if (newDevice.device_type === "base") {
   }
 
   // 🧩 Format as two arrays
-  responseData = [[bm1], [bm2]];
+  responseData = [bm1, bm2];
 } else {
   responseData = [[newDevice]];
 }

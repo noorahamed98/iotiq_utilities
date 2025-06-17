@@ -246,15 +246,17 @@ export const addDevice = async (req, res) => {
 let responseData = [];
 
 if (newDevice.device_type === "base") {
+  // Convert Mongoose doc to plain object if needed
   const baseClone = newDevice.toObject?.() || newDevice;
 
-  // ❗️Remove switch_no from baseClone to avoid conflict
-  delete baseClone.switch_no;
+  // 🔥 REMOVE the actual saved switch_no to avoid duplication in both
+  const { switch_no, ...rest } = baseClone;
 
-  const bm1 = { ...baseClone, switch_no: "BM1" };
-  const bm2 = { ...baseClone, switch_no: "BM2" };
+  // 🔁 Create both BM1 and BM2 copies
+  const bm1 = { ...rest, switch_no: "BM1" };
+  const bm2 = { ...rest, switch_no: "BM2" };
 
-  // Set status based on the one actually stored in DB
+  // ✅ Assign the correct status only to the actual stored switch
   if (newDevice.switch_no === "BM1") {
     bm1.status = newDevice.status;
     bm2.status = "off";
@@ -263,6 +265,7 @@ if (newDevice.device_type === "base") {
     bm2.status = newDevice.status;
   }
 
+  // 🧩 Format as two arrays
   responseData = [[bm1], [bm2]];
 } else {
   responseData = [[newDevice]];
@@ -273,6 +276,7 @@ return res.status(201).json({
   data: responseData,
   message: "Device added successfully",
 });
+
 
   } catch (error) {
     // Determine appropriate status code based on error

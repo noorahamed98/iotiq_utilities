@@ -5,7 +5,7 @@ export const getAllDevices = async (req, res) => {
   try {
     const { mobile_number } = req.user;
     const { spaceId } = req.params;
-    const { type } = req.query; // Optional device type filter
+    const { type } = req.query;
 
     if (!spaceId) {
       return res.status(400).json({
@@ -14,41 +14,18 @@ export const getAllDevices = async (req, res) => {
       });
     }
 
-const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
+    const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
 
-// Optional type filter
-const filteredDevices = type
-  ? devices.filter((device) => device.device_type === type)
-  : devices;
+    const filteredDevices = type
+      ? devices.filter((device) => device.device_type === type)
+      : devices;
 
-const responseData = [];
-
-for (const device of filteredDevices) {
-  if (device.device_type === "base") {
-    responseData.push({
-      ...device,
-      switch_no: "BM1",
-      status: device.status || "off"
+    return res.status(200).json({
+      success: true,
+      data: filteredDevices
     });
-    responseData.push({
-      ...device,
-      switch_no: "BM2",
-      status: "off"
-    });
-  } else {
-    responseData.push(device);
-  }
-}
-
-return res.status(200).json({
-  success: true,
-  data: responseData
-});
-
-
 
   } catch (error) {
-    // Determine appropriate status code based on error
     let statusCode = 500;
     if (
       error.message === "User not found" ||
@@ -63,6 +40,7 @@ return res.status(200).json({
     });
   }
 };
+
 
 // Get a specific device by ID
 export const getDeviceById = async (req, res) => {

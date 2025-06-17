@@ -202,13 +202,21 @@ if (deviceData.device_type === "base") {
   deviceData.switch_no = available;
   console.log("✅ Assigned switch:", available);
 }
+  const bm1Device = {
+  ...deviceData,
+  switch_no: "BM1",
+  status: "off"
+};
 
+const bm2Device = {
+  ...deviceData,
+  switch_no: "BM2",
+  status: "off"
+};
 
-  user.spaces[spaceIndex].devices.push(deviceData);
-  await user.save();
-
-  const newDevice =
-    user.spaces[spaceIndex].devices[user.spaces[spaceIndex].devices.length - 1];
+// Save both to DB
+user.spaces[spaceIndex].devices.push(bm1Device, bm2Device);
+await user.save();
 
   // Send config over MQTT
   if (deviceData.connection_type === "wifi" && deviceData.thing_name) {
@@ -226,7 +234,7 @@ if (deviceData.device_type === "base") {
     }
   }
 
-  return newDevice;
+  return [bm1Device, bm2Device];
 }
 
 

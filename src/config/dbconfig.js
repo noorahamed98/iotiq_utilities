@@ -47,6 +47,13 @@ const conditionSchema = new mongoose.Schema({
       return this.device_type === "base";
     },
   },
+  switch_no: {
+  type: String,
+  enum: ["BM1", "BM2"],
+  required: function () {
+    return this.device_type === "base";
+  }
+},
   level: {
     type: Number,
     min: 0,
@@ -143,6 +150,7 @@ const setupSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  
   updated_at: {
     type: Date,
     default: Date.now,

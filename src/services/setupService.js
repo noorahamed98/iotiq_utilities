@@ -120,14 +120,23 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     if (setupData.condition.device_type == "tank")
     {
       // ✅ MQTT Publish Payload Logic
-      const mqttPayload = {
-        deviceid: conditionDevice.device_id,
-        sensor_no: conditionDevice.sensor_no || "TM1",
-        switch_no: conditionDevice.switch_no || "BM1",
-        maximum: setupData.condition.maximum.toString(),
-        minimum: setupData.condition.minimum.toString()
+      let mqttPayload = {};
 
-      };
+if (conditionDevice.device_type === "base") {
+  mqttPayload = {
+    deviceid: conditionDevice.device_id,
+    switch_no: conditionDevice.switch_no || "BM1", // <-- ensure this is set
+    status: setupData.condition.status || "off"
+  };
+} else if (conditionDevice.device_type === "tank") {
+  mqttPayload = {
+    deviceid: conditionDevice.device_id,
+    sensor_no: conditionDevice.sensor_no || "TM1",
+    switch_no: conditionDevice.switch_no || "BM1",
+    maximum: setupData.condition.maximum.toString(),
+    minimum: setupData.condition.minimum.toString()
+  };
+}
       setting(client,setupData.condition.actions[0].device_id,mqttPayload);
     }
     // Save changes
@@ -140,6 +149,8 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     throw error;
   }
 }
+
+
 
 /**
  * Get all setups for a space
@@ -187,6 +198,8 @@ export async function getSetups(mobileNumber, spaceId) {
           device_id: setup.condition.device_id,
           device_name: conditionDevice?.device_name || "Unknown Device",
           device_type: setup.condition.device_type,
+          switch_no: setup.condition.switch_no || "BM1", 
+          // default to BM1 if not set
           status: setup.condition.status, // for base devices
           maximum: setup.condition.maximum,
           minimum: setup.condition.minimum,

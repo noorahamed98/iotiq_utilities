@@ -1,5 +1,6 @@
 // src/controllers/setupController.js
 import * as setupService from "../services/setupService.js";
+import { User } from "../config/dbconfig.js";
 
 /**
  * Create a new setup configuration
@@ -317,7 +318,6 @@ export const getSetups = async (req, res) => {
     });
   }
 };
-
 /**
  * Get a setup by ID
  * @param {Object} req - Express request object

@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import logger from "../utils/logger.js";
 import { setting } from "./controlService.js";
 import { client } from "../config/postgres.js";
+
 /**
  * Create a new setup configuration for a space
  * @param {String} mobileNumber - User's mobile number
@@ -54,6 +55,16 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           "Status field is required and must be 'on' or 'off' for base devices"
         );
       }
+      
+      // ✅ FIX 1: Validate switch_no for base devices
+      if (
+        !setupData.condition.switch_no ||
+        !["BM1", "BM2"].includes(setupData.condition.switch_no)
+      ) {
+        throw new Error(
+          "switch_no field is required and must be 'BM1' or 'BM2' for base devices"
+        );
+      }
     }
 
     if (conditionDevice.device_type === "tank") {
@@ -97,6 +108,30 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           "set_status field is required and must be 'on' or 'off' for actions"
         );
       }
+      // ✅ FIX: Validate switch_no for each action
+      if (!action.switch_no || !["BM1", "BM2"].includes(action.switch_no)) {
+        throw new Error(
+          "switch_no field is required and must be 'BM1' or 'BM2' for each action"
+        );
+      }
+    }
+
+    // ✅ FIX 2: Create condition object with proper switch_no handling
+    const conditionData = {
+      device_id: setupData.condition.device_id,
+      device_type: setupData.condition.device_type,
+      actions: setupData.condition.actions
+    };
+
+    // Add fields based on device type
+    if (setupData.condition.device_type === "base") {
+      conditionData.status = setupData.condition.status;
+      conditionData.switch_no = setupData.condition.switch_no; // ✅ Ensure switch_no is included
+    } else if (setupData.condition.device_type === "tank") {
+      conditionData.level = setupData.condition.level;
+      conditionData.minimum = setupData.condition.minimum;
+      conditionData.maximum = setupData.condition.maximum;
+      conditionData.operator = setupData.condition.operator;
     }
 
     // Create the new setup
@@ -104,7 +139,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       _id: new mongoose.Types.ObjectId(),
       name: setupData.name || `Setup ${(space.setups?.length || 0) + 1}`,
       description: setupData.description || "",
-      condition: setupData.condition,
+      condition: conditionData, // ✅ Use the properly constructed condition object
       active: setupData.active !== undefined ? setupData.active : true,
       created_at: new Date(),
       updated_at: new Date(),
@@ -117,28 +152,24 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
     user.spaces[spaceIndex].setups.push(newSetup);
 
-    if (setupData.condition.device_type == "tank")
-    {
-      // ✅ MQTT Publish Payload Logic
+    // ✅ FIX 3: Fixed MQTT payload logic
+    if (setupData.condition.device_type === "tank") {
       let mqttPayload = {};
 
-if (conditionDevice.device_type === "base") {
-  mqttPayload = {
-    deviceid: conditionDevice.device_id,
-    switch_no: conditionDevice.switch_no || "BM1", // <-- ensure this is set
-    status: setupData.condition.status || "off"
-  };
-} else if (conditionDevice.device_type === "tank") {
-  mqttPayload = {
-    deviceid: conditionDevice.device_id,
-    sensor_no: conditionDevice.sensor_no || "TM1",
-    switch_no: conditionDevice.switch_no || "BM1",
-    maximum: setupData.condition.maximum.toString(),
-    minimum: setupData.condition.minimum.toString()
-  };
-}
-      setting(client,setupData.condition.actions[0].device_id,mqttPayload);
+      // Use the first action's switch_no for MQTT payload
+      const firstAction = setupData.condition.actions[0];
+      
+      mqttPayload = {
+        deviceid: conditionDevice.device_id,
+        sensor_no: conditionDevice.sensor_no || "TM1",
+        switch_no: firstAction.switch_no, // ✅ Use action's switch_no directly
+        maximum: setupData.condition.maximum.toString(),
+        minimum: setupData.condition.minimum.toString()
+      };
+
+      setting(client, firstAction.device_id, mqttPayload);
     }
+    
     // Save changes
     await user.save();
 
@@ -149,8 +180,6 @@ if (conditionDevice.device_type === "base") {
     throw error;
   }
 }
-
-
 
 /**
  * Get all setups for a space
@@ -184,27 +213,37 @@ export async function getSetups(mobileNumber, spaceId) {
         return {
           device_id: action.device_id,
           device_name: actionDevice?.device_name || "Unknown Device",
+          switch_no: action.switch_no, // ✅ Include switch_no in response
           set_status: action.set_status,
           delay: action.delay || 0,
         };
       });
+
+      // ✅ FIX 4: Properly handle switch_no in response
+      const conditionResponse = {
+        device_id: setup.condition.device_id,
+        device_name: conditionDevice?.device_name || "Unknown Device",
+        device_type: setup.condition.device_type,
+        actions: cleanActions,
+      };
+
+      // Add device-type specific fields
+      if (setup.condition.device_type === "base") {
+        conditionResponse.status = setup.condition.status;
+        conditionResponse.switch_no = setup.condition.switch_no || "BM1"; // ✅ Include switch_no
+      } else if (setup.condition.device_type === "tank") {
+        conditionResponse.level = setup.condition.level;
+        conditionResponse.minimum = setup.condition.minimum;
+        conditionResponse.maximum = setup.condition.maximum;
+        conditionResponse.operator = setup.condition.operator;
+      }
 
       // Return cleaned setup object
       return {
         id: setup._id.toString(),
         name: setup.name,
         description: setup.description || "",
-        condition: {
-          device_id: setup.condition.device_id,
-          device_name: conditionDevice?.device_name || "Unknown Device",
-          device_type: setup.condition.device_type,
-          switch_no: setup.condition.switch_no || "BM1", 
-          // default to BM1 if not set
-          status: setup.condition.status, // for base devices
-          maximum: setup.condition.maximum,
-          minimum: setup.condition.minimum,
-          actions: cleanActions,
-        },
+        condition: conditionResponse,
         active: setup.active,
         created_at: setup.created_at,
         updated_at: setup.updated_at,
@@ -215,39 +254,6 @@ export async function getSetups(mobileNumber, spaceId) {
     return cleanSetups;
   } catch (error) {
     logger.error(`Error getting setups: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Get a specific setup by ID
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {String} setupId - Setup ID
- * @returns {Object} The setup configuration
- */
-export async function getSetupById(mobileNumber, spaceId, setupId) {
-  try {
-    const user = await User.findOne({ mobile_number: mobileNumber });
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    const space = user.spaces.find((space) => space._id.toString() === spaceId);
-    if (!space) {
-      throw new Error("Space not found");
-    }
-
-    const setup = space.setups?.find(
-      (setup) => setup._id.toString() === setupId
-    );
-    if (!setup) {
-      throw new Error("Setup not found");
-    }
-
-    return setup;
-  } catch (error) {
-    logger.error(`Error getting setup: ${error.message}`);
     throw error;
   }
 }
@@ -288,8 +294,6 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
 
     // If condition is being updated, validate new condition
     if (setupData.condition) {
-      // Perform the same validation as in createSetup
-      // (Validation code would be similar to createSetup logic)
       const conditionDeviceId = setupData.condition.device_id;
       const conditionDevice = user.spaces[spaceIndex].devices.find(
         (device) => device.device_id === conditionDeviceId
@@ -316,6 +320,16 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
         ) {
           throw new Error(
             "Status field is required and must be 'on' or 'off' for base devices"
+          );
+        }
+        
+        // ✅ FIX 5: Validate switch_no in update
+        if (
+          !setupData.condition.switch_no ||
+          !["BM1", "BM2"].includes(setupData.condition.switch_no)
+        ) {
+          throw new Error(
+            "switch_no field is required and must be 'BM1' or 'BM2' for base devices"
           );
         }
       } else if (conditionDevice.device_type === "tank") {
@@ -366,6 +380,13 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
               "set_status field is required and must be 'on' or 'off' for actions"
             );
           }
+          
+          // ✅ FIX: Validate switch_no for each action in update
+          if (!action.switch_no || !["BM1", "BM2"].includes(action.switch_no)) {
+            throw new Error(
+              "switch_no field is required and must be 'BM1' or 'BM2' for each action"
+            );
+          }
         }
       }
     }
@@ -385,8 +406,8 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     }
 
     if (setupData.condition) {
-      user.spaces[spaceIndex].setups[setupIndex].condition =
-        setupData.condition;
+      // ✅ FIX 6: Properly update condition with all fields including switch_no
+      user.spaces[spaceIndex].setups[setupIndex].condition = setupData.condition;
     }
 
     // Update the updated_at timestamp
@@ -402,6 +423,8 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     throw error;
   }
 }
+
+
 
 /**
  * Update setup active status

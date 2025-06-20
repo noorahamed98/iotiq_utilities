@@ -161,6 +161,72 @@ export const createSetup = async (req, res) => {
         });
       }
 
+      // Add this validation in your createSetup function, after device type validation
+
+// For base devices, validate status and switch_no
+if (setupData.condition.device_type === "base") {
+  if (!setupData.condition.status) {
+    return res.status(400).json({
+      success: false,
+      message: "Status is required for base devices",
+    });
+  }
+
+  if (!["on", "off"].includes(setupData.condition.status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Status must be 'on' or 'off' for base devices",
+    });
+  }
+
+  // ✅ NEW: Validate switch_no for base devices
+  if (setupData.condition.switch_no && !["BM1", "BM2"].includes(setupData.condition.switch_no)) {
+    return res.status(400).json({
+      success: false,
+      message: "switch_no must be 'BM1' or 'BM2' for base devices",
+    });
+  }
+}
+
+// For tank devices, validate required fields and switch_no
+if (setupData.condition.device_type === "tank") {
+  if (setupData.condition.level === undefined) {
+    return res.status(400).json({
+      success: false,
+      message: "Level is required for tank devices",
+    });
+  }
+
+  if (setupData.condition.level < 0 || setupData.condition.level > 100) {
+    return res.status(400).json({
+      success: false,
+      message: "Level must be between 0 and 100 for tank devices",
+    });
+  }
+
+  if (!setupData.condition.operator) {
+    return res.status(400).json({
+      success: false,
+      message: "Operator is required for tank devices",
+    });
+  }
+
+  if (!["<", ">", "<=", ">=", "=="].includes(setupData.condition.operator)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid operator. Must be one of: <, >, <=, >=, ==",
+    });
+  }
+
+  // ✅ NEW: Validate switch_no for tank devices (for the action device)
+  if (setupData.condition.switch_no && !["BM1", "BM2"].includes(setupData.condition.switch_no)) {
+    return res.status(400).json({
+      success: false,
+      message: "switch_no must be 'BM1' or 'BM2'",
+    });
+  }
+}
+
       // Optional delay validation
       if (action.delay !== undefined) {
         if (typeof action.delay !== 'number' || action.delay < 0) {

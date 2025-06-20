@@ -23,6 +23,13 @@ const actionSchema = new mongoose.Schema({
     type: String,
     required: [true, "Device ID for action is required"],
   },
+  switch_no: {
+  type: String,
+  enum: ["BM1", "BM2"],
+  required: function () {
+    return this.device_type === "base";
+  }
+},
   set_status: {
     type: String,
     required: [true, "Status value for action is required"],
@@ -174,7 +181,7 @@ const deviceSchema = new mongoose.Schema(
       required: [true, "Device name is required"],
     },
 
-    switch_no: {
+  switch_no: {
   type: String,
   enum: ["BM1", "BM2"],
   required: function () {

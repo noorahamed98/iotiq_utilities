@@ -163,15 +163,31 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
         deviceid: conditionDevice.device_id,
         sensor_no: conditionDevice.sensor_no || "TM1",
         switch_no: firstAction.switch_no, // ✅ Use action's switch_no directly
-        maximum: setupData.condition.maximum.toString(),
-        minimum: setupData.condition.minimum.toString()
+        maximum: setupData.condition.maximum?.toString(),
+        minimum: setupData.condition.minimum?.toString()
       };
 
       setting(client, firstAction.device_id, mqttPayload);
+    } 
+    // Add MQTT publishing for base devices
+    else if (setupData.condition.device_type === "base") {
+      const mqttPayload = {
+        deviceid: setupData.condition.device_id,
+        switch_no: setupData.condition.switch_no,
+        status: setupData.condition.status,
+        setup_id: newSetup._id.toString(),
+        setup_name: newSetup.name,
+        actions: setupData.condition.actions.map(action => ({
+          device_id: action.device_id,
+          switch_no: action.switch_no,
+          set_status: action.set_status,
+          delay: action.delay || 0
+        }))
+      };
+
+      // Publish to the condition device or the first action device as needed
+      setting(client, setupData.condition.device_id, mqttPayload);
     }
-    
-    // Save changes
-    await user.save();
 
     logger.info(`Setup created for space ${spaceId}`);
     return newSetup;
@@ -415,6 +431,43 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
 
     // Save the updated user document
     await user.save();
+
+    // MQTT publishing logic for both device types
+    if (setupData.condition.device_type === "tank") {
+      let mqttPayload = {};
+
+      // Use the first action's switch_no for MQTT payload
+      const firstAction = setupData.condition.actions[0];
+
+      mqttPayload = {
+        deviceid: conditionDevice.device_id,
+        sensor_no: conditionDevice.sensor_no || "TM1",
+        switch_no: firstAction.switch_no, // Use action's switch_no directly
+        maximum: setupData.condition.maximum?.toString(),
+        minimum: setupData.condition.minimum?.toString()
+      };
+
+      setting(client, firstAction.device_id, mqttPayload);
+    } 
+    // Add MQTT publishing for base devices
+    else if (setupData.condition.device_type === "base") {
+      const mqttPayload = {
+        deviceid: setupData.condition.device_id,
+        switch_no: setupData.condition.switch_no,
+        status: setupData.condition.status,
+        setup_id: newSetup._id.toString(),
+        setup_name: newSetup.name,
+        actions: setupData.condition.actions.map(action => ({
+          device_id: action.device_id,
+          switch_no: action.switch_no,
+          set_status: action.set_status,
+          delay: action.delay || 0
+        }))
+      };
+
+      // Publish to the condition device or the first action device as needed
+      setting(client, setupData.condition.device_id, mqttPayload);
+    }
 
     logger.info(`Setup updated for space ${spaceId}`);
     return user.spaces[spaceIndex].setups[setupIndex];

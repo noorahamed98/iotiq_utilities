@@ -16,16 +16,13 @@ jobs:
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.IOT_UTILITY_PEM_KEY }}" > ~/.ssh/id_rsa
-        cat ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
         ssh-keyscan -H ${{ secrets.IOT_UTILITY_HOST }} >> ~/.ssh/known_hosts
 
     - name: Deploy to IOT_UTILITY
       env: 
         ENV_CONTENT: ${{ secrets.ENV }}
-        ENV_KEY: ${{ secrets.ENV }}
       run: |
-        echo "$ENV_KEY"
         ssh -o StrictHostKeyChecking=no ${{ secrets.IOT_UTILITY_USER }}@${{ secrets.IOT_UTILITY_HOST }} << EOF
           cd ~/iotiq_utilities
           git pull origin master

@@ -22,10 +22,8 @@ jobs:
     - name: Deploy to IOT_UTILITY
       env: 
         ENV_CONTENT: ${{ secrets.ENV }}
-        ENV_PEM_KEY: ${{ secrets.IOT_UTILITY_PEM_KEY }}
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.IOT_UTILITY_USER }}@${{ secrets.IOT_UTILITY_HOST }} << EOF
-         echo "$ENV_PEM_KEY" > iot_pem
           cd ~/iotiq_utilities
           git pull origin master
           echo 

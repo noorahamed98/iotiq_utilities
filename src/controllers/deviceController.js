@@ -339,10 +339,11 @@ export const deleteDevice = async (req, res) => {
 };
 
 // Add a tank device to a space
+// Updated addTankDevice function in deviceController.js
 export const addTankDevice = async (req, res) => {
   try {
     const { mobile_number } = req.user;
-    const { spaceId, baseDeviceId } = req.params;
+    const { spaceId, baseDeviceId, switchNo } = req.params; // Add switchNo parameter
     const tankData = req.body;
 
     if (!spaceId) {
@@ -356,6 +357,21 @@ export const addTankDevice = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Base device ID is required",
+      });
+    }
+
+    if (!switchNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Switch number is required (BM1 or BM2)",
+      });
+    }
+
+    // Validate switch number
+    if (!["BM1", "BM2"].includes(switchNo)) {
+      return res.status(400).json({
+        success: false,
+        message: "Switch number must be either 'BM1' or 'BM2'",
       });
     }
 
@@ -374,24 +390,18 @@ export const addTankDevice = async (req, res) => {
       });
     }
 
-    if (!tankData.slave_name) {
-      return res.status(400).json({
-        success: false,
-        message: "Slave name is required (e.g., TM1)",
-      });
-    }
-
     const newDevice = await deviceService.addTankDevice(
       mobile_number,
       spaceId,
       baseDeviceId,
+      switchNo, // Pass switch number
       tankData
     );
 
     return res.status(201).json({
       success: true,
       data: newDevice,
-      message: "Tank device added successfully",
+      message: `Tank device added successfully to switch ${switchNo}`,
     });
   } catch (error) {
     // Determine appropriate status code based on error
@@ -399,21 +409,102 @@ export const addTankDevice = async (req, res) => {
     if (
       error.message === "User not found" ||
       error.message === "Space not found" ||
-      error.message === "Base device not found or is not a base model"
+      error.message.includes("Base device") && error.message.includes("not found")
     ) {
       statusCode = 404;
     }
     if (error.message.includes("already exists") || 
-        error.message.includes("already registered")) {
+        error.message.includes("already registered") ||
+        error.message.includes("already has")) {
       statusCode = 409; // Conflict
     }
-    if (error.message.includes("required")) {
+    if (error.message.includes("required") || 
+        error.message.includes("must be")) {
       statusCode = 400;
     }
 
     return res.status(statusCode).json({
       success: false,
       message: error.message,
+    });
+  }
+};
+
+// Add a new function to get switch capacity for a base device
+export const getBaseSwitchCapacity = async (req, res) => {
+  try {
+    const { mobile_number } = req.user;
+    const { spaceId, baseDeviceId, switchNo } = req.params;
+
+    if (!spaceId || !baseDeviceId || !switchNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Space ID, Base Device ID, and Switch Number are required",
+      });
+    }
+
+    // Validate switch number
+    if (!["BM1", "BM2"].includes(switchNo)) {
+      return res.status(400).json({
+        success: false,
+        message: "Switch number must be either 'BM1' or 'BM2'",
+      });
+    }
+
+    const devices = await deviceService.getSpaceDevices(mobile_number, spaceId);
+    
+    // Find the specific base device switch
+    const baseDevice = devices.find(d => 
+      d.device_id === baseDeviceId && 
+      d.device_type === "base" && 
+      d.switch_no === switchNo
+    );
+    
+    if (!baseDevice) {
+      return res.status(404).json({
+        success: false,
+        message: `Base device switch ${switchNo} not found`,
+      });
+    }
+
+    // Count connected tanks for this specific switch
+    const connectedTanks = devices.filter(d => 
+      d.device_type === "tank" && 
+      d.parent_device_id === baseDeviceId &&
+      d.parent_switch_no === switchNo
+    );
+
+    // Determine available slave names based on switch
+    const slaveMapping = {
+      "BM1": ["TM1", "TM2"],
+      "BM2": ["TM3", "TM4"]
+    };
+
+    const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);
+    const availableSlaveNames = slaveMapping[switchNo].filter(
+      slaveName => !usedSlaveNames.includes(slaveName)
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        base_device: baseDevice,
+        switch_no: switchNo,
+        connected_tanks: connectedTanks.length,
+        max_capacity: 2, // Each switch can handle 2 tanks
+        available_slots: 2 - connectedTanks.length,
+        available_slave_names: availableSlaveNames,
+        tank_details: connectedTanks.map(tank => ({
+          device_id: tank.device_id,
+          device_name: tank.device_name,
+          slave_name: tank.slave_name
+        }))
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to get switch capacity",
     });
   }
 };

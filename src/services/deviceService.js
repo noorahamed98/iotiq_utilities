@@ -240,10 +240,12 @@ await user.save();
 
 // Add a tank device to a space and connect to base device
 // Updated addTankDevice function in deviceService.js
+// Updated addTankDevice function in deviceService.js
 export async function addTankDevice(
   mobileNumber,
   spaceId,
   baseDeviceId,
+  switchNo, // Add switch_no parameter
   tankData
 ) {
   try {
@@ -259,44 +261,59 @@ export async function addTankDevice(
       throw new Error("Space not found");
     }
 
-    // Find ANY base device with the matching device_id (since there are now 2 with same ID)
-    const baseDevices = user.spaces[spaceIndex].devices.filter(
+    // Find the specific base device with matching device_id AND switch_no
+    const baseDevice = user.spaces[spaceIndex].devices.find(
       (device) =>
-        device.device_id === baseDeviceId && device.device_type === "base"
+        device.device_id === baseDeviceId && 
+        device.device_type === "base" &&
+        device.switch_no === switchNo
     );
 
-    if (baseDevices.length === 0) {
-      throw new Error("Base device not found or is not a base model");
+    if (!baseDevice) {
+      throw new Error(`Base device with ID '${baseDeviceId}' and switch '${switchNo}' not found`);
     }
 
-    // Use the first base device found (they have same device_id anyway)
-    const baseDevice = baseDevices[0];
+    // Validate switch_no
+    if (!["BM1", "BM2"].includes(switchNo)) {
+      throw new Error("Switch number must be either 'BM1' or 'BM2'");
+    }
 
-    // Count connected tanks for this base device ID (across all switches)
+    // Count connected tanks for this specific base device switch
     const connectedTanks = user.spaces[spaceIndex].devices.filter(
       (device) => 
         device.device_type === "tank" && 
-        device.parent_device_id === baseDeviceId
+        device.parent_device_id === baseDeviceId &&
+        device.parent_switch_no === switchNo // Add this field to track which switch
     );
 
-    if (connectedTanks.length >= 4) {
+    if (connectedTanks.length >= 2) { // Each switch can handle 2 tanks (TM1, TM2 for BM1 and TM3, TM4 for BM2)
       const tankNames = connectedTanks.map(tank => tank.device_name).join(', ');
       throw new Error(
-        `Base device '${baseDevice.device_name}' already has 4 tanks connected (${tankNames}). ` +
-        `Please unassign one of the existing tanks before adding a new one. Maximum 4 tanks per base device allowed.`
+        `Base device switch '${switchNo}' already has 2 tanks connected (${tankNames}). ` +
+        `Please unassign one of the existing tanks before adding a new one. Maximum 2 tanks per switch allowed.`
       );
     }
 
+    // Determine available slave names based on switch
+    const slaveMapping = {
+      "BM1": ["TM1", "TM2"],
+      "BM2": ["TM3", "TM4"]
+    };
+
     const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);
-    const availableSlaveNames = ['TM1', 'TM2', 'TM3', 'TM4'].filter(
+    const availableSlaveNames = slaveMapping[switchNo].filter(
       slaveName => !usedSlaveNames.includes(slaveName)
     );
+
+    if (availableSlaveNames.length === 0) {
+      throw new Error(`No available slave names for switch ${switchNo}`);
+    }
 
     // Automatically assign the first available slave name
     const autoAssignedSlaveName = availableSlaveNames[0];
     tankData.slave_name = autoAssignedSlaveName;
 
-    logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankData.device_id}`);
+    logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankData.device_id} for switch: ${switchNo}`);
 
     // Check if tank device exists globally
     const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
@@ -321,6 +338,7 @@ export async function addTankDevice(
     // Set defaults for tank model
     tankData.device_type = "tank";
     tankData.parent_device_id = baseDeviceId;
+    tankData.parent_switch_no = switchNo; // Add this field to track parent switch
     tankData.level = 0;
 
     // Set connection_type to "without_wifi" by default if not specified
@@ -361,6 +379,7 @@ export async function addTankDevice(
         );
         const slaveRequestMessage = {
           deviceid: baseDeviceId,
+          switch_no: switchNo, // Include switch number in MQTT message
           sensor_no: autoAssignedSlaveName,
           slaveid: tankData.device_id,
         };
@@ -376,7 +395,7 @@ export async function addTankDevice(
 
         publish(slaveRequestTopic, slaveRequestMessage);
         logger.info(
-          `Sent slave request for tank ${tankData.device_id} with slave name ${autoAssignedSlaveName} to base ${baseDeviceId}`
+          `Sent slave request for tank ${tankData.device_id} with slave name ${autoAssignedSlaveName} to base ${baseDeviceId} switch ${switchNo}`
         );
       } catch (mqttError) {
         logger.error(

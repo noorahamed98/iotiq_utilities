@@ -39,9 +39,16 @@ router.post(
   deviceController.addDevice
 );
 router.post(
-  "/spaces/:spaceId/devices/:baseDeviceId/tank",
+  "/spaces/:spaceId/devices/:baseDeviceId/switch/:switchNo/tank",
   universalAuth,
   deviceController.addTankDevice
+);
+
+// Additional route to check switch capacity
+router.get(
+  "/spaces/:spaceId/devices/:baseDeviceId/switch/:switchNo/capacity",
+  universalAuth,
+  deviceController.getBaseSwitchCapacity
 );
 
 // New route for adding tank devices

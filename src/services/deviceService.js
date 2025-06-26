@@ -239,6 +239,7 @@ await user.save();
 
 
 // Add a tank device to a space and connect to base device
+// Updated addTankDevice function in deviceService.js
 export async function addTankDevice(
   mobileNumber,
   spaceId,
@@ -258,48 +259,49 @@ export async function addTankDevice(
       throw new Error("Space not found");
     }
 
-    // Find the base device
-    const baseDevice = user.spaces[spaceIndex].devices.find(
+    // Find ANY base device with the matching device_id (since there are now 2 with same ID)
+    const baseDevices = user.spaces[spaceIndex].devices.filter(
       (device) =>
         device.device_id === baseDeviceId && device.device_type === "base"
     );
 
-    if (!baseDevice) {
+    if (baseDevices.length === 0) {
       throw new Error("Base device not found or is not a base model");
     }
 
+    // Use the first base device found (they have same device_id anyway)
+    const baseDevice = baseDevices[0];
+
+    // Count connected tanks for this base device ID (across all switches)
     const connectedTanks = user.spaces[spaceIndex].devices.filter(
-  (device) => 
-    device.device_type === "tank" && 
-    device.parent_device_id === baseDeviceId
-);
+      (device) => 
+        device.device_type === "tank" && 
+        device.parent_device_id === baseDeviceId
+    );
 
-if (connectedTanks.length >= 4) {
-  // Create a helpful error message with connected tank names
-  const tankNames = connectedTanks.map(tank => tank.device_name).join(', ');
-  throw new Error(
-    `Base device '${baseDevice.device_name}' already has 4 tanks connected (${tankNames}). ` +
-    `Please unassign one of the existing tanks before adding a new one. Maximum 4 tanks per base device allowed.`
-  );
-}
+    if (connectedTanks.length >= 4) {
+      const tankNames = connectedTanks.map(tank => tank.device_name).join(', ');
+      throw new Error(
+        `Base device '${baseDevice.device_name}' already has 4 tanks connected (${tankNames}). ` +
+        `Please unassign one of the existing tanks before adding a new one. Maximum 4 tanks per base device allowed.`
+      );
+    }
 
-const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);
-const availableSlaveNames = ['TM1', 'TM2', 'TM3', 'TM4'].filter(
-  slaveName => !usedSlaveNames.includes(slaveName)
-);
+    const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);
+    const availableSlaveNames = ['TM1', 'TM2', 'TM3', 'TM4'].filter(
+      slaveName => !usedSlaveNames.includes(slaveName)
+    );
 
-// Automatically assign the first available slave name
-const autoAssignedSlaveName = availableSlaveNames[0];
+    // Automatically assign the first available slave name
+    const autoAssignedSlaveName = availableSlaveNames[0];
+    tankData.slave_name = autoAssignedSlaveName;
 
-// Override the slave_name in tankData
-tankData.slave_name = autoAssignedSlaveName;
+    logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankData.device_id}`);
 
-logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankData.device_id}`);
     // Check if tank device exists globally
     const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
 
     if (globalCheck.exists) {
-      // Check if it's the same user trying to add to a different space
       if (globalCheck.user.mobile_number === mobileNumber) {
         throw new Error(
           `Tank device '${tankData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first before adding to another space.`
@@ -312,10 +314,6 @@ logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankD
     }
 
     // Ensure required fields for tank model
-    if (!tankData.slave_name) {
-      throw new Error("Slave name is required for tank devices");
-    }
-
     if (!tankData.device_name) {
       throw new Error("Device name is required");
     }
@@ -323,7 +321,7 @@ logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankD
     // Set defaults for tank model
     tankData.device_type = "tank";
     tankData.parent_device_id = baseDeviceId;
-    tankData.level = 0; // Initial water level
+    tankData.level = 0;
 
     // Set connection_type to "without_wifi" by default if not specified
     if (!tankData.connection_type) {
@@ -333,22 +331,18 @@ logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankD
     // For "without_wifi" mode, ensure channel and address fields
     if (tankData.connection_type === "without_wifi") {
       if (!tankData.channel) {
-        tankData.channel = "24"; // Default channel
+        tankData.channel = "24";
       }
-
       if (!tankData.address_l) {
-        tankData.address_l = "0x01"; // Default address low
+        tankData.address_l = "0x01";
       }
-
       if (!tankData.address_h) {
-        tankData.address_h = "0x01"; // Default address high
+        tankData.address_h = "0x01";
       }
     }
 
     // Add tank device to the space
     user.spaces[spaceIndex].devices.push(tankData);
-
-    // Save the updated user document
     await user.save();
 
     // Get the newly added device
@@ -357,7 +351,7 @@ logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankD
         user.spaces[spaceIndex].devices.length - 1
       ];
 
-    // If base device has thing_name, send slave request via MQTT
+    // Send MQTT message using the base device's thing_name
     if (baseDevice.thing_name) {
       try {
         const slaveRequestTopic = getTopic(
@@ -366,31 +360,30 @@ logger.info(`Auto-assigned slave name: ${autoAssignedSlaveName} to tank: ${tankD
           "slaveRequest"
         );
         const slaveRequestMessage = {
-           deviceid: baseDeviceId,
-      sensor_no: autoAssignedSlaveName, // Use auto-assigned name instead of tankData.slave_name
-      slaveid: tankData.device_id,
+          deviceid: baseDeviceId,
+          sensor_no: autoAssignedSlaveName,
+          slaveid: tankData.device_id,
         };
 
         // For "without_wifi" mode, add additional parameters
         if (tankData.connection_type === "without_wifi") {
-      slaveRequestMessage.mode = 3;
-      slaveRequestMessage.channel = tankData.channel;
-      slaveRequestMessage.address_l = tankData.address_l;
-      slaveRequestMessage.address_h = tankData.address_h;
-      slaveRequestMessage.slave_name = autoAssignedSlaveName; // Use auto-assigned name
+          slaveRequestMessage.mode = 3;
+          slaveRequestMessage.channel = tankData.channel;
+          slaveRequestMessage.address_l = tankData.address_l;
+          slaveRequestMessage.address_h = tankData.address_h;
+          slaveRequestMessage.slave_name = autoAssignedSlaveName;
+        }
+
+        publish(slaveRequestTopic, slaveRequestMessage);
+        logger.info(
+          `Sent slave request for tank ${tankData.device_id} with slave name ${autoAssignedSlaveName} to base ${baseDeviceId}`
+        );
+      } catch (mqttError) {
+        logger.error(
+          `Error sending slave request via MQTT: ${mqttError.message}`
+        );
+      }
     }
-        // Send MQTT message to base device to connect to tank
- publish(slaveRequestTopic, slaveRequestMessage);
-    logger.info(
-      `Sent slave request for tank ${tankData.device_id} with slave name ${autoAssignedSlaveName} to base ${baseDeviceId}`
-    );
-  } catch (mqttError) {
-    logger.error(
-      `Error sending slave request via MQTT: ${mqttError.message}`
-    );
-    // Continue process, don't fail if MQTT fails
-  }
-}
 
     return newTankDevice;
   } catch (error) {

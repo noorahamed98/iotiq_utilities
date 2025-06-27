@@ -30,7 +30,7 @@ router.get(
 );
 router.get(
   "/users/:userId/devices",
-  universalAuth,
+  universalAuth, 
   deviceController.getAllUserDevices
 );
 router.post(

@@ -3,6 +3,7 @@ import { User } from "../config/dbconfig.js";
 import { getMqttClient, publish } from "../utils/mqttHelper.js";
 import { getTopic } from "../config/awsIotConfig.js";
 import logger from "../utils/logger.js";
+import { trace, context } from '@opentelemetry/api';
 
 // Helper function to check if device exists globally
 async function checkDeviceExistsGlobally(deviceId, thingName = null) {
@@ -141,101 +142,112 @@ export async function checkDeviceAvailability(deviceId, thingName = null) {
 
 // Add a base device to a space
 export async function addDevice(mobileNumber, spaceId, deviceData) {
-  const user = await User.findOne({ mobile_number: mobileNumber });
-  if (!user) {
-    throw new Error("User not found");
-  }
+  const span = trace.getSpan(context.active());
+  const traceInfo = span ? span.spanContext() : {};
 
-  const spaceIndex = user.spaces.findIndex(
-    (space) => space._id.toString() === spaceId
-  );
-  if (spaceIndex === -1) {
-    throw new Error("Space not found");
-  }
-
-  // Check if device exists globally
-  const globalCheck = await checkDeviceExistsGlobally(
-    deviceData.device_id,
-    deviceData.thing_name
-  );
-
-  if (globalCheck.exists) {
-    if (globalCheck.user.mobile_number === mobileNumber) {
-      throw new Error(
-        `Device '${deviceData.device_id}' is already registered in your space '${globalCheck.space.space_name}'. Please remove it from there first.`
-      );
-    } else {
-      throw new Error(
-        `Device '${deviceData.device_id}' is already registered to another account.`
-      );
+  try {
+    const user = await User.findOne({ mobile_number: mobileNumber });
+    if (!user) {
+      logger.error("User not found", { mobileNumber, traceId: traceInfo.traceId });
+      throw new Error("User not found");
     }
-  }
 
-  if (deviceData.connection_type === "wifi") {
-    if (!deviceData.ssid || !deviceData.password) {
-      throw new Error("SSID and password are required for WiFi devices");
+    const spaceIndex = user.spaces.findIndex(space => space._id.toString() === spaceId);
+    if (spaceIndex === -1) {
+      logger.error("Space not found", { spaceId, mobileNumber, traceId: traceInfo.traceId });
+      throw new Error("Space not found");
     }
+
+    // Check for global duplicate device
+    const globalCheck = await checkDeviceExistsGlobally(deviceData.device_id, deviceData.thing_name);
+    if (globalCheck.exists) {
+      logger.warn("Device already registered", {
+        device_id: deviceData.device_id,
+        registeredTo: globalCheck.user.mobile_number,
+        traceId: traceInfo.traceId
+      });
+
+      if (globalCheck.user.mobile_number === mobileNumber) {
+        throw new Error(`Device '${deviceData.device_id}' already in your space '${globalCheck.space.space_name}'`);
+      } else {
+        throw new Error(`Device '${deviceData.device_id}' is registered to another account`);
+      }
+    }
+
+    // Validate WiFi creds if WiFi mode
+    if (deviceData.connection_type === "wifi") {
+      if (!deviceData.ssid || !deviceData.password) {
+        throw new Error("SSID and password are required for WiFi devices");
+      }
+    }
+
+    // Set default thing_name if base and not provided
+    if (!deviceData.thing_name && deviceData.device_type === "base") {
+      deviceData.thing_name = deviceData.device_id;
+    }
+
+    // Auto assign switch_no if base device
+    if (deviceData.device_type === "base") {
+      const currentDevices = user.spaces[spaceIndex].devices;
+      const existingSwitches = currentDevices
+        .filter(d => d.device_type === "base")
+        .map(d => d.switch_no);
+      const available = ["BM1", "BM2"].find(sw => !existingSwitches.includes(sw));
+
+      if (!available) {
+        throw new Error("Maximum 2 base devices already assigned in this space");
+      }
+
+      deviceData.switch_no = available;
+      logger.info("Assigned switch_no", {
+        switch_no: available,
+        device_id: deviceData.device_id,
+        traceId: traceInfo.traceId
+      });
+    }
+
+    // Create BM1 and BM2 clones
+    const bm1Device = { ...deviceData, switch_no: "BM1", status: "off" };
+    const bm2Device = { ...deviceData, switch_no: "BM2", status: "off" };
+
+    // Push to DB
+    user.spaces[spaceIndex].devices.push(bm1Device, bm2Device);
+    await user.save();
+
+    // Optional MQTT send if WiFi
+    if (deviceData.connection_type === "wifi" && deviceData.thing_name) {
+      try {
+        const topic = getTopic("config", deviceData.thing_name, "config");
+        const message = {
+          deviceid: deviceData.device_id,
+          ssid: deviceData.ssid,
+          password: deviceData.password,
+          mode: 1
+        };
+        publish(topic, message);
+        logger.info("Published MQTT config", { topic, message, traceId: traceInfo.traceId });
+      } catch (e) {
+        logger.error("MQTT publish error", { error: e.message, traceId: traceInfo.traceId });
+      }
+    }
+
+    logger.info("Base device added", {
+      device_id: deviceData.device_id,
+      spaceId,
+      traceId: traceInfo.traceId
+    });
+
+    return [bm1Device, bm2Device];
+  } catch (error) {
+    logger.error("Error in addDevice", {
+      error: error.message,
+      device_id: deviceData.device_id,
+      traceId: traceInfo.traceId
+    });
+    throw error;
   }
-
-  // Set thing_name if not provided
-  if (!deviceData.thing_name && deviceData.device_type === "base") {
-    deviceData.thing_name = deviceData.device_id;
-  }
-
-  // ✅ AUTO-ASSIGN switch_no
-  // ✅ Assign switch_no only for base devices
-if (deviceData.device_type === "base") {
-  const currentDevices = user.spaces[spaceIndex].devices;
-
-  const existingSwitches = currentDevices
-    .filter((d) => d.device_type === "base")
-    .map((d) => d.switch_no);
-
-  const available = ["BM1", "BM2"].find(
-    (sw) => !existingSwitches.includes(sw)
-  );
-
-  if (!available) {
-    throw new Error("Maximum 2 base devices already assigned in this space");
-  }
-
-  deviceData.switch_no = available;
-  console.log("✅ Assigned switch:", available);
 }
-  const bm1Device = {
-  ...deviceData,
-  switch_no: "BM1",
-  status: "off"
-};
 
-const bm2Device = {
-  ...deviceData,
-  switch_no: "BM2",
-  status: "off"
-};
-
-// Save both to DB
-user.spaces[spaceIndex].devices.push(bm1Device, bm2Device);
-await user.save();
-
-  // Send config over MQTT
-  if (deviceData.connection_type === "wifi" && deviceData.thing_name) {
-    try {
-      const topic = getTopic("config", deviceData.thing_name, "config");
-      const message = {
-        deviceid: deviceData.device_id,
-        ssid: deviceData.ssid,
-        password: deviceData.password,
-        mode: 1
-      };
-      publish(topic, message);
-    } catch (e) {
-      console.error("MQTT error:", e.message);
-    }
-  }
-
-  return [bm1Device, bm2Device];
-}
 
 
 // Add a tank device to a space and connect to base device
@@ -297,7 +309,7 @@ export async function addTankDevice(
     // Determine available slave names based on switch
     const slaveMapping = {
       "BM1": ["TM1", "TM2"],
-      "BM2": ["TM3", "TM4"]
+      "BM2": ["TM1", "TM2"]
     };
 
     const usedSlaveNames = connectedTanks.map(tank => tank.slave_name);

@@ -1,3 +1,6 @@
+// tracing MUST be the first import
+import './utils/tracing.js'; // ✅ Add this line first
+
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -39,14 +42,13 @@ app.use(logRequests);
 // app.use("/", apiLimiter);
 
 app.use("/", authRoutes);
-app.use(autoRefreshMiddleware); // Middleware to refresh auth token
+app.use(autoRefreshMiddleware);
 app.use("/", protectedRoutes);
 app.use("/", controlRoutes);
 app.use("/", userRoutes);
 app.use("/", tankDataRoutes);
-app.use('/', setupRoutes);  // Remove the '/api' prefix
+app.use("/", setupRoutes);
 
 app.use(errorHandler);
 
 export default app;
-

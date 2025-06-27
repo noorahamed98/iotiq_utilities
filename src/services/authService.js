@@ -5,6 +5,7 @@ import jwt from "jsonwebtoken";
 import axios from "axios";
 import dotenv from "dotenv";
 import { v4 as uuidv4 } from "uuid";
+import logger from '../utils/logger.js';
 dotenv.config();
 
 // JWT configuration
@@ -323,6 +324,7 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
 
   // If user not found - throw error to be caught by controller
   if (!user) {
+    logger.warn("⚠️ User not found", { mobileNumber });
     throw new Error("User not found");
   }
 
@@ -351,6 +353,9 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
     // Send OTP via WhatsApp
     await sendWhatsAppOTP(fullPhoneNumber, otp);
 
+    // Log successful OTP send
+    logger.info('✅ OTP sent for sign-in', { mobileNumber });
+
     return {
       success: true,
       message: "OTP sent to your WhatsApp number",
@@ -359,6 +364,13 @@ export async function initiateSignIn(mobileNumber, countryCode = "+91") {
   } catch (error) {
     // Only catch WhatsApp/OTP related errors, not user validation errors
     console.error("WhatsApp OTP sending failed:", error);
+
+    // Log the error details
+    logger.error('❌ Failed to send OTP for sign-in', {
+      mobileNumber,
+      error: error.message
+    });
+
     throw new Error("Failed to send OTP via WhatsApp");
   }
 }
@@ -370,6 +382,7 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
 
     // If user not found
     if (!user) {
+      logger.warn("⚠️ User not found", { mobileNumber });
       throw new Error("User not found");
     }
 
@@ -390,8 +403,9 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
     // Calculate time difference in minutes
     const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
 
-    // Check if OTP is expired (5 minutes)
+    // If OTP expired
     if (diffInMinutes > 5) {
+      logger.warn('⚠️ OTP expired', { mobileNumber });
       // Mark OTP as verified but expired to prevent reuse
       await User.updateOne(
         { mobile_number: mobileNumber },
@@ -401,7 +415,9 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
     }
 
     // Verify OTP
+    // If OTP incorrect
     if (user.otp_record.otp !== otpToVerify) {
+      logger.warn('⚠️ Incorrect OTP', { mobileNumber });
       throw new Error("Incorrect OTP");
     }
 
@@ -425,6 +441,7 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       generateTokens(updatedUser);
 
     // Return user and tokens
+    logger.info('✅ OTP verified, user signed in', { mobileNumber });
     return {
       success: true,
       message: "Sign in successful",
@@ -441,6 +458,10 @@ export async function verifyOTP(mobileNumber, otpToVerify) {
       },
     };
   } catch (error) {
+    logger.error('❌ OTP verification failed', {
+      mobileNumber,
+      error: error.message
+    });
     throw error;
   }
 }
@@ -564,7 +585,7 @@ export async function verifySignUpOTP(mobileNumber, otpToVerify) {
     // Calculate time difference in minutes
     const diffInMinutes = (now - otpCreatedAt) / (1000 * 60);
 
-    // Check if OTP is expired (5 minutes)
+    // If OTP expired
     if (diffInMinutes > 5) {
       // Mark OTP as verified but expired to prevent reuse
       await User.updateOne(
@@ -631,6 +652,7 @@ export async function resendSignInOTP(mobileNumber, countryCode = "+91") {
 
     // If user not found
     if (!user) {
+      logger.warn("⚠️ User not found", { mobileNumber });
       throw new Error("User not found");
     }
 

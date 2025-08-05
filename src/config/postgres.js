@@ -13,7 +13,7 @@ const dbConfig = {
 const client = new Client(dbConfig);
 
 async function connectPostDB() {
-  try {
+  try { 
     await client.connect();
     console.log("PostgreSQL connected");
   } catch (error) {

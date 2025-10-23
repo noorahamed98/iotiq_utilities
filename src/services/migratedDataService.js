@@ -13,6 +13,7 @@ const tankReadingSchema = new mongoose.Schema({
   sensor_no: { type: String, index: true },
   switch_no: { type: String, index: true },
   level: { type: Number },
+  value: { type: Number }, // Original value field from PostgreSQL
   status: { type: String },
   message_type: { type: String, index: true },
   timestamp: { type: Date, required: true, index: true },

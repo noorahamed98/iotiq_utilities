@@ -33,6 +33,7 @@ const tankReadingSchema = new mongoose.Schema({
   sensor_no: { type: String, index: true },
   switch_no: { type: String, index: true },
   level: { type: Number },
+  value: { type: Number }, // Original value field from PostgreSQL
   status: { type: String },
   message_type: { type: String, index: true },
   timestamp: { type: Date, required: true, index: true },
@@ -108,10 +109,7 @@ class PostgresToMongoMigrator {
 
     // Connect to MongoDB
     try {
-      await mongoose.connect(process.env.MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
+      await mongoose.connect(process.env.MONGO_URI);
       console.log('✅ Connected to MongoDB');
     } catch (error) {
       console.error('❌ Failed to connect to MongoDB:', error.message);
@@ -155,7 +153,8 @@ class PostgresToMongoMigrator {
             deviceid: row.deviceid,
             sensor_no: row.sensor_no,
             switch_no: row.switch_no,
-            level: row.level,
+            level: row.level || row.value, // Handle both 'level' and 'value' fields
+            value: row.value, // Keep original value field
             status: row.status,
             message_type: row.message_type,
             timestamp: row.timestamp,

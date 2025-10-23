@@ -257,7 +257,25 @@ const deviceSchema = new mongoose.Schema(
         );
       },
     },
-    slave_name: {
+    range: {
+      type: Number,
+      required: function () {
+        return (
+          this.device_type === "tank" &&
+          this.connection_type === "without_wifi"
+        );
+      },
+    },
+    capacity: {
+      type: Number,
+      required: function () {
+        return (
+          this.device_type === "tank" &&
+          this.connection_type === "without_wifi"
+        );
+      },
+    },
+    address_h: {
       type: String,
       required: function () {
         return this.device_type === "tank";

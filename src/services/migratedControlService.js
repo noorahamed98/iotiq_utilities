@@ -6,7 +6,7 @@
  */
 
 import mongoose from "mongoose";
-import { getThingIdByDeviceId, getRecentDeviceResponses, getTankDataByMessageType } from './migratedDataService.js';
+
 
 /**
  * Helper functions to read thingid and response documents from MongoDB.
@@ -64,7 +64,7 @@ export async function getThingIdByDeviceId(deviceid) {
 /**
  * Poll the 'slave_response' collection in MongoDB for a matching thingid.
  * Returns the document or null on timeout.
- */
+ *
 export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 5000) {
   const database = db();
   const coll = database.collection("slave_response");
@@ -84,6 +84,7 @@ export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 5000)
 
   return null;
 }
+  */
 
 /**
  * Check base responded by looking in 'tank_data' collection for alive_reply.
@@ -152,7 +153,7 @@ function sanitizeMongoDoc(doc) {
  */
 export async function getThingIdFromMongoDB(deviceId) {
   try {
-    const thingId = await getThingIdByDeviceId(deviceId);
+    const thingId = await getThingIdByDeviceId(deviceId); // Use the imported function
     return thingId;
   } catch (error) {
     console.error('Error fetching thing ID from MongoDB:', error);

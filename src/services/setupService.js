@@ -331,6 +331,41 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     await user.save();
     logger.info(`Setup saved to database for space ${spaceId}`);
 
+    // Fetch the saved setup to get MongoDB-generated IDs and enrich with action codes
+    const savedUser = await User.findOne({ mobile_number: mobileNumber });
+    const savedSpace = savedUser.spaces.find(s => s._id.toString() === spaceId);
+    const savedSetup = savedSpace.setups.find(s => s._id.toString() === newSetup._id.toString());
+
+    // Enrich actions with action codes, device_type, and device_number
+    if (savedSetup.condition.actions) {
+      savedSetup.condition.actions = savedSetup.condition.actions.map(action => {
+        const actionObj = action.toObject();
+        
+        // Generate action code
+        const actionCode = convertActionToCode(action, space.devices);
+        if (actionCode) {
+          actionObj.action_code = actionCode;
+        }
+
+        // Add device_type
+        if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
+          actionObj.device_type = "VC";
+        } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
+          actionObj.device_type = "MC";
+        } else {
+          actionObj.device_type = "base";
+        }
+
+        // Add device_number
+        const deviceNumberMatch = action.device_id.match(/\d+/);
+        if (deviceNumberMatch) {
+          actionObj.device_number = deviceNumberMatch[0];
+        }
+
+        return actionObj;
+      });
+    }
+
     // Handle MQTT operations
     try {
       if (setupData.condition.device_type === "tank") {
@@ -384,7 +419,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     }
 
     logger.info(`Setup created successfully for space ${spaceId}`);
-    return newSetup;
+    return savedSetup;
   } catch (error) {
     logger.error(`Error creating setup: ${error.message}`);
     throw error;
@@ -513,6 +548,38 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     await user.save();
     logger.info(`Setup updated and saved to database for space ${spaceId}`);
 
+    // Fetch the updated setup to get enriched data
+    const updatedUser = await User.findOne({ mobile_number: mobileNumber });
+    const updatedSpace = updatedUser.spaces.find(s => s._id.toString() === spaceId);
+    const updatedSetup = updatedSpace.setups.find(s => s._id.toString() === setupId);
+
+    // Enrich actions with action codes
+    if (updatedSetup.condition.actions) {
+      updatedSetup.condition.actions = updatedSetup.condition.actions.map(action => {
+        const actionObj = action.toObject();
+        
+        const actionCode = convertActionToCode(action, space.devices);
+        if (actionCode) {
+          actionObj.action_code = actionCode;
+        }
+
+        if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
+          actionObj.device_type = "VC";
+        } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
+          actionObj.device_type = "MC";
+        } else {
+          actionObj.device_type = "base";
+        }
+
+        const deviceNumberMatch = action.device_id.match(/\d+/);
+        if (deviceNumberMatch) {
+          actionObj.device_number = deviceNumberMatch[0];
+        }
+
+        return actionObj;
+      });
+    }
+
     // Handle MQTT operations
     try {
       if (setupData.condition) {
@@ -570,7 +637,7 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     }
 
     logger.info(`Setup updated successfully for space ${spaceId}`);
-    return user.spaces[spaceIndex].setups[setupIndex];
+    return updatedSetup;
   } catch (error) {
     logger.error(`Error updating setup: ${error.message}`);
     throw error;

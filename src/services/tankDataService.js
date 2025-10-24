@@ -9,7 +9,6 @@ import logger from '../utils/logger.js';
  */
 export async function sensorData(req, res) {
   const { deviceid, sensorNumber } = req.params;
-  const client = req.app.locals.dbClient;
   const useMongoDB = process.env.USE_MIGRATED_DATA === 'true';
 
   if (!deviceid || !sensorNumber) {
@@ -36,8 +35,6 @@ export async function sensorData(req, res) {
       }
     });
 
-    let result;
-
     if (useMongoDB) {
       // Use MongoDB
       const mongoResult = await getLatestSensorData(deviceid, sensorNumber);
@@ -61,7 +58,13 @@ export async function sensorData(req, res) {
       res.json({ success: true, data: [formattedResult] });
     } else {
       // Use PostgreSQL
-      result = await client.query(
+      const dbClient = (req && req.app && req.app.locals && req.app.locals.dbClient) ? req.app.locals.dbClient : global.pgClient;
+      if (!dbClient) {
+        logger.error('Postgres client not available');
+        return res.status(500).json({ success: false, message: 'Database client not available' });
+      }
+
+      const result = await dbClient.query(
         `
         SELECT *
         FROM tank_data
@@ -90,7 +93,6 @@ export async function sensorData(req, res) {
  */
 export async function switchStatus(req, res) {
   const { deviceid, switchNumber } = req.params;
-  const client = req.app.locals.dbClient;
   const useMongoDB = process.env.USE_MIGRATED_DATA === 'true';
 
   if (!deviceid || !switchNumber) {
@@ -115,8 +117,6 @@ export async function switchStatus(req, res) {
       }
     });
 
-    let result;
-
     if (useMongoDB) {
       const { getLatestSwitchStatus } = await import('./migratedDataService.js');
       const mongoResult = await getLatestSwitchStatus(deviceid, switchNumber);
@@ -137,7 +137,13 @@ export async function switchStatus(req, res) {
 
       res.json({ success: true, data: [formattedResult] });
     } else {
-      result = await client.query(
+      const dbClient = (req && req.app && req.app.locals && req.app.locals.dbClient) ? req.app.locals.dbClient : global.pgClient;
+      if (!dbClient) {
+        logger.error('Postgres client not available');
+        return res.status(500).json({ success: false, message: 'Database client not available' });
+      }
+
+      const result = await dbClient.query(
         `
         SELECT *
         FROM tank_data
@@ -186,12 +192,17 @@ export async function handleMqttIncomingData(message) {
         status,
         message_type: 'mqtt_update',
         timestamp: now,
-        thingid: thingId,
+        thingid: thingId || message.thingid,
       });
       logger.info(`MQTT data saved to MongoDB for ${deviceid}`);
     } else {
       // Insert or update in PostgreSQL
-      const dbClient = global.pgClient;
+      const dbClient = global.pgClient || null;
+      if (!dbClient) {
+        logger.error('Postgres client not available for MQTT save');
+        return;
+      }
+
       await dbClient.query(
         `
         INSERT INTO tank_data (deviceid, sensor_no, switch_no, value, status, timestamp)

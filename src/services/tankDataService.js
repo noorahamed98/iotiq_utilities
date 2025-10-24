@@ -1,18 +1,21 @@
-// tankDataService.js
-import { getLatestSensorData } from './migratedDataService.js';
+// tankDataService.js - MongoDB Only Version
+import { getLatestSensorData, getLatestSwitchStatus } from './migratedDataService.js';
+import { TankReading } from './migratedDataService.js';
 import { publish, getMqttClient } from '../utils/mqttHelper.js';
 import logger from '../utils/logger.js';
 
 /**
- * Fetch latest tank sensor data
- * Now also subscribes to MQTT update topics for live sync
+ * Fetch latest tank sensor data from MongoDB
+ * Subscribes to MQTT update topics for live sync
  */
 export async function sensorData(req, res) {
   const { deviceid, sensorNumber } = req.params;
-  const useMongoDB = process.env.USE_MIGRATED_DATA === 'true';
 
   if (!deviceid || !sensorNumber) {
-    return res.status(400).json({ success: false, message: 'deviceId and sensorNumber are required.' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'deviceId and sensorNumber are required.' 
+    });
   }
 
   try {
@@ -35,68 +38,51 @@ export async function sensorData(req, res) {
       }
     });
 
-    if (useMongoDB) {
-      // Use MongoDB
-      const mongoResult = await getLatestSensorData(deviceid, sensorNumber);
+    // Fetch from MongoDB
+    const mongoResult = await getLatestSensorData(deviceid, sensorNumber);
 
-      if (!mongoResult) {
-        return res.status(404).json({ success: false, message: 'No data found for the given sensor.' });
-      }
-
-      const formattedResult = {
-        deviceid: mongoResult.deviceid,
-        sensor_no: mongoResult.sensor_no,
-        switch_no: mongoResult.switch_no,
-        level: mongoResult.level,
-        value: mongoResult.value || mongoResult.level,
-        status: mongoResult.status,
-        message_type: mongoResult.message_type,
-        timestamp: mongoResult.timestamp,
-        thingid: mongoResult.thingid,
-      };
-
-      res.json({ success: true, data: [formattedResult] });
-    } else {
-      // Use PostgreSQL
-      const dbClient = (req && req.app && req.app.locals && req.app.locals.dbClient) ? req.app.locals.dbClient : global.pgClient;
-      if (!dbClient) {
-        logger.error('Postgres client not available');
-        return res.status(500).json({ success: false, message: 'Database client not available' });
-      }
-
-      const result = await dbClient.query(
-        `
-        SELECT *
-        FROM tank_data
-        WHERE sensor_no = $1 AND deviceid = $2
-        ORDER BY timestamp DESC
-        LIMIT 1
-        `,
-        [sensorNumber, deviceid]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'No data found for the given sensor.' });
-      }
-
-      res.json({ success: true, data: [result.rows[0]] });
+    if (!mongoResult) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No data found for the given sensor.' 
+      });
     }
+
+    const formattedResult = {
+      deviceid: mongoResult.deviceid,
+      sensor_no: mongoResult.sensor_no,
+      switch_no: mongoResult.switch_no,
+      level: mongoResult.level,
+      value: mongoResult.value || mongoResult.level,
+      status: mongoResult.status,
+      message_type: mongoResult.message_type,
+      timestamp: mongoResult.timestamp,
+      thingid: mongoResult.thingid,
+    };
+
+    res.json({ success: true, data: [formattedResult] });
   } catch (error) {
     logger.error('Error fetching latest sensor data:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal Server Error',
+      details: error.message 
+    });
   }
 }
 
 /**
- * Fetch latest switch status
+ * Fetch latest switch status from MongoDB
  * Reflects real-time MQTT updates via $aws/things/(thingId)/update
  */
 export async function switchStatus(req, res) {
   const { deviceid, switchNumber } = req.params;
-  const useMongoDB = process.env.USE_MIGRATED_DATA === 'true';
 
   if (!deviceid || !switchNumber) {
-    return res.status(400).json({ success: false, message: 'deviceId and switchNumber are required.' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'deviceId and switchNumber are required.' 
+    });
   }
 
   try {
@@ -117,107 +103,122 @@ export async function switchStatus(req, res) {
       }
     });
 
-    if (useMongoDB) {
-      const { getLatestSwitchStatus } = await import('./migratedDataService.js');
-      const mongoResult = await getLatestSwitchStatus(deviceid, switchNumber);
+    // Fetch from MongoDB
+    const mongoResult = await getLatestSwitchStatus(deviceid, switchNumber);
 
-      if (!mongoResult) {
-        return res.status(404).json({ success: false, message: 'No data found for the given switch.' });
-      }
-
-      const formattedResult = {
-        deviceid: mongoResult.deviceid,
-        sensor_no: mongoResult.sensor_no,
-        switch_no: mongoResult.switch_no,
-        value: mongoResult.value || mongoResult.level,
-        status: mongoResult.status === "true" ? "on" : "off",
-        timestamp: mongoResult.timestamp,
-        thingid: mongoResult.thingid,
-      };
-
-      res.json({ success: true, data: [formattedResult] });
-    } else {
-      const dbClient = (req && req.app && req.app.locals && req.app.locals.dbClient) ? req.app.locals.dbClient : global.pgClient;
-      if (!dbClient) {
-        logger.error('Postgres client not available');
-        return res.status(500).json({ success: false, message: 'Database client not available' });
-      }
-
-      const result = await dbClient.query(
-        `
-        SELECT *
-        FROM tank_data
-        WHERE switch_no = $1 AND deviceid = $2
-        ORDER BY timestamp DESC
-        LIMIT 1
-        `,
-        [switchNumber, deviceid]
-      );
-
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, message: 'No data found for the given switch.' });
-      }
-
-      const data = result.rows[0];
-      data.status = data.status === "true" ? "on" : "off";
-
-      res.json({ success: true, data: [data] });
+    if (!mongoResult) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No data found for the given switch.' 
+      });
     }
+
+    const formattedResult = {
+      deviceid: mongoResult.deviceid,
+      sensor_no: mongoResult.sensor_no,
+      switch_no: mongoResult.switch_no,
+      value: mongoResult.value || mongoResult.level,
+      status: mongoResult.status === "true" ? "on" : "off",
+      timestamp: mongoResult.timestamp,
+      thingid: mongoResult.thingid,
+    };
+
+    res.json({ success: true, data: [formattedResult] });
   } catch (error) {
     logger.error('Error fetching latest switch data:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal Server Error',
+      details: error.message 
+    });
   }
 }
 
 /**
- * 🧩 NEW FUNCTION
- * Handle incoming MQTT messages and update DB (MongoDB or PostgreSQL)
+ * Handle incoming MQTT messages and update MongoDB
  */
 export async function handleMqttIncomingData(message) {
   try {
     const { deviceid, sensor_no, switch_no, value, status, timestamp, thingId } = message;
-    if (!deviceid) return;
-
-    const useMongoDB = process.env.USE_MIGRATED_DATA === 'true';
-    const now = timestamp || new Date().toISOString();
-
-    if (useMongoDB) {
-      // Insert or update in MongoDB
-      const { saveMqttDataToMongo } = await import('./migratedDataService.js');
-      await saveMqttDataToMongo({
-        deviceid,
-        sensor_no,
-        switch_no,
-        value,
-        status,
-        message_type: 'mqtt_update',
-        timestamp: now,
-        thingid: thingId || message.thingid,
-      });
-      logger.info(`MQTT data saved to MongoDB for ${deviceid}`);
-    } else {
-      // Insert or update in PostgreSQL
-      const dbClient = global.pgClient || null;
-      if (!dbClient) {
-        logger.error('Postgres client not available for MQTT save');
-        return;
-      }
-
-      await dbClient.query(
-        `
-        INSERT INTO tank_data (deviceid, sensor_no, switch_no, value, status, timestamp)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (deviceid, sensor_no)
-        DO UPDATE SET
-          value = EXCLUDED.value,
-          status = EXCLUDED.status,
-          timestamp = EXCLUDED.timestamp
-        `,
-        [deviceid, sensor_no, switch_no, value, status, now]
-      );
-      logger.info(`MQTT data updated in PostgreSQL for ${deviceid}`);
+    
+    if (!deviceid) {
+      logger.warn('Received MQTT message without deviceid');
+      return;
     }
+
+    const now = timestamp ? new Date(timestamp) : new Date();
+
+    // Save to MongoDB
+    const tankReading = new TankReading({
+      deviceid,
+      sensor_no,
+      switch_no,
+      level: value,
+      value,
+      status,
+      message_type: 'mqtt_update',
+      timestamp: now,
+      thingid: thingId || message.thingid,
+      raw_data: message
+    });
+
+    await tankReading.save();
+    logger.info(`✅ MQTT data saved to MongoDB for device ${deviceid}`);
   } catch (err) {
     logger.error(`❌ Error handling MQTT data: ${err.message}`);
   }
 }
+
+/**
+ * Get historical sensor data for a device
+ */
+export async function getHistoricalData(req, res) {
+  const { deviceid, sensorNumber } = req.params;
+  const { startDate, endDate, limit = 1000 } = req.query;
+
+  if (!deviceid) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'deviceId is required.' 
+    });
+  }
+
+  try {
+    const query = { deviceid };
+    
+    if (sensorNumber) {
+      query.sensor_no = sensorNumber;
+    }
+
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) query.timestamp.$gte = new Date(startDate);
+      if (endDate) query.timestamp.$lte = new Date(endDate);
+    }
+
+    const readings = await TankReading.find(query)
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    res.json({ 
+      success: true, 
+      data: readings,
+      count: readings.length 
+    });
+  } catch (error) {
+    logger.error('Error fetching historical data:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal Server Error',
+      details: error.message 
+    });
+  }
+}
+
+export default {
+  sensorData,
+  switchStatus,
+  handleMqttIncomingData,
+  getHistoricalData
+};

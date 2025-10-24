@@ -1,19 +1,19 @@
 /**
- * Migrated Data Service
+ * Migrated Data Service - MongoDB Only
  * 
- * This service provides methods to query the migrated PostgreSQL data
- * from MongoDB collections without affecting existing functionality.
+ * Provides methods to query device data from MongoDB collections
  */
 
 import mongoose from 'mongoose';
+import logger from '../utils/logger.js';
 
-// MongoDB Schemas for migrated data (matching migration script)
+// MongoDB Schemas for device data
 const tankReadingSchema = new mongoose.Schema({
   deviceid: { type: String, required: true, index: true },
   sensor_no: { type: String, index: true },
   switch_no: { type: String, index: true },
   level: { type: Number },
-  value: { type: Number }, // Original value field from PostgreSQL
+  value: { type: Number },
   status: { type: String },
   message_type: { type: String, index: true },
   timestamp: { type: Date, required: true, index: true },
@@ -56,10 +56,34 @@ const SensorMetadata = mongoose.model('SensorMetadata', sensorMetadataSchema);
 const DeviceResponse = mongoose.model('DeviceResponse', deviceResponseSchema);
 
 /**
- * Get latest sensor data for a device (equivalent to PostgreSQL tank_data query)
- * @param {string} deviceId - Device ID
- * @param {string} sensorNumber - Sensor number
- * @returns {Promise<Object>} Latest sensor reading
+ * Save MQTT data to MongoDB
+ */
+export async function saveMqttDataToMongo(data) {
+  try {
+    const tankReading = new TankReading({
+      deviceid: data.deviceid,
+      sensor_no: data.sensor_no,
+      switch_no: data.switch_no,
+      level: data.level || data.value,
+      value: data.value,
+      status: data.status,
+      message_type: data.message_type || 'mqtt_update',
+      timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+      thingid: data.thingid,
+      raw_data: data
+    });
+
+    await tankReading.save();
+    logger.info(`✅ MQTT data saved to MongoDB for device ${data.deviceid}`);
+    return tankReading;
+  } catch (error) {
+    logger.error(`❌ Error saving MQTT data to MongoDB: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Get latest sensor data for a device
  */
 export async function getLatestSensorData(deviceId, sensorNumber) {
   try {
@@ -72,16 +96,13 @@ export async function getLatestSensorData(deviceId, sensorNumber) {
 
     return result;
   } catch (error) {
-    console.error('Error fetching latest sensor data from MongoDB:', error);
+    logger.error('Error fetching latest sensor data from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get latest switch status for a device
- * @param {string} deviceId - Device ID
- * @param {string} switchNumber - Switch number
- * @returns {Promise<Object>} Latest switch status
  */
 export async function getLatestSwitchStatus(deviceId, switchNumber) {
   try {
@@ -95,19 +116,13 @@ export async function getLatestSwitchStatus(deviceId, switchNumber) {
 
     return result;
   } catch (error) {
-    console.error('Error fetching latest switch status from MongoDB:', error);
+    logger.error('Error fetching latest switch status from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get historical sensor data for a device within a time range
- * @param {string} deviceId - Device ID
- * @param {string} sensorNumber - Sensor number (optional)
- * @param {Date} startDate - Start date
- * @param {Date} endDate - End date
- * @param {number} limit - Maximum number of records (default: 1000)
- * @returns {Promise<Array>} Historical sensor readings
  */
 export async function getHistoricalSensorData(deviceId, sensorNumber = null, startDate, endDate, limit = 1000) {
   try {
@@ -130,46 +145,39 @@ export async function getHistoricalSensorData(deviceId, sensorNumber = null, sta
 
     return results;
   } catch (error) {
-    console.error('Error fetching historical sensor data from MongoDB:', error);
+    logger.error('Error fetching historical sensor data from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get sensor metadata by device ID
- * @param {string} deviceId - Device ID
- * @returns {Promise<Object>} Sensor metadata
  */
 export async function getSensorMetadata(deviceId) {
   try {
     const result = await SensorMetadata.findOne({ deviceid: deviceId }).lean();
     return result;
   } catch (error) {
-    console.error('Error fetching sensor metadata from MongoDB:', error);
+    logger.error('Error fetching sensor metadata from MongoDB:', error);
     throw error;
   }
 }
 
 /**
- * Get thing ID for a device (equivalent to PostgreSQL sensor_data query)
- * @param {string} deviceId - Device ID
- * @returns {Promise<string>} Thing ID
+ * Get thing ID for a device
  */
 export async function getThingIdByDeviceId(deviceId) {
   try {
     const result = await SensorMetadata.findOne({ deviceid: deviceId }, { thingid: 1 }).lean();
     return result ? result.thingid : null;
   } catch (error) {
-    console.error('Error fetching thing ID from MongoDB:', error);
+    logger.error('Error fetching thing ID from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get recent device responses
- * @param {string} thingId - Thing ID
- * @param {number} seconds - Number of seconds to look back (default: 10)
- * @returns {Promise<Array>} Recent device responses
  */
 export async function getRecentDeviceResponses(thingId, seconds = 10) {
   try {
@@ -184,18 +192,13 @@ export async function getRecentDeviceResponses(thingId, seconds = 10) {
 
     return results;
   } catch (error) {
-    console.error('Error fetching recent device responses from MongoDB:', error);
+    logger.error('Error fetching recent device responses from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get tank data with specific message type and time range
- * @param {string} deviceId - Device ID
- * @param {string} messageType - Message type (e.g., 'alive_reply', 'update')
- * @param {string} sensorNo - Sensor number (optional)
- * @param {number} seconds - Number of seconds to look back (default: 10)
- * @returns {Promise<Array>} Matching tank readings
  */
 export async function getTankDataByMessageType(deviceId, messageType, sensorNo = null, seconds = 10) {
   try {
@@ -217,18 +220,13 @@ export async function getTankDataByMessageType(deviceId, messageType, sensorNo =
 
     return results;
   } catch (error) {
-    console.error('Error fetching tank data by message type from MongoDB:', error);
+    logger.error('Error fetching tank data by message type from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get aggregated sensor statistics
- * @param {string} deviceId - Device ID
- * @param {string} sensorNumber - Sensor number
- * @param {Date} startDate - Start date
- * @param {Date} endDate - End date
- * @returns {Promise<Object>} Aggregated statistics
  */
 export async function getSensorStatistics(deviceId, sensorNumber, startDate, endDate) {
   try {
@@ -257,16 +255,13 @@ export async function getSensorStatistics(deviceId, sensorNumber, startDate, end
     const result = await TankReading.aggregate(pipeline);
     return result[0] || null;
   } catch (error) {
-    console.error('Error fetching sensor statistics from MongoDB:', error);
+    logger.error('Error fetching sensor statistics from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Search tank readings with flexible criteria
- * @param {Object} criteria - Search criteria
- * @param {Object} options - Query options (sort, limit, skip)
- * @returns {Promise<Array>} Matching tank readings
  */
 export async function searchTankReadings(criteria = {}, options = {}) {
   try {
@@ -284,14 +279,13 @@ export async function searchTankReadings(criteria = {}, options = {}) {
 
     return results;
   } catch (error) {
-    console.error('Error searching tank readings from MongoDB:', error);
+    logger.error('Error searching tank readings from MongoDB:', error);
     throw error;
   }
 }
 
 /**
  * Get collection statistics
- * @returns {Promise<Object>} Collection statistics
  */
 export async function getMigrationStatistics() {
   try {
@@ -315,7 +309,58 @@ export async function getMigrationStatistics() {
       }
     };
   } catch (error) {
-    console.error('Error fetching migration statistics:', error);
+    logger.error('Error fetching migration statistics:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update or create sensor metadata
+ */
+export async function upsertSensorMetadata(deviceId, thingId, deviceType, connectionInfo) {
+  try {
+    const result = await SensorMetadata.findOneAndUpdate(
+      { deviceid: deviceId },
+      {
+        $set: {
+          thingid: thingId,
+          device_type: deviceType,
+          connection_info: connectionInfo,
+          last_seen: new Date()
+        },
+        $setOnInsert: {
+          first_seen: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    logger.info(`✅ Sensor metadata updated for device ${deviceId}`);
+    return result;
+  } catch (error) {
+    logger.error(`❌ Error upserting sensor metadata: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Save device response
+ */
+export async function saveDeviceResponse(thingId, deviceId, responseType, responseData) {
+  try {
+    const deviceResponse = new DeviceResponse({
+      thingid: thingId,
+      deviceid: deviceId,
+      response_type: responseType,
+      response_data: responseData,
+      inserted_at: new Date()
+    });
+
+    await deviceResponse.save();
+    logger.info(`✅ Device response saved for thingid ${thingId}`);
+    return deviceResponse;
+  } catch (error) {
+    logger.error(`❌ Error saving device response: ${error.message}`);
     throw error;
   }
 }

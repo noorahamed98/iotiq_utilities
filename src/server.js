@@ -15,6 +15,7 @@ connectDB()
     process.exit(1);
   });
 
+/*
 connectPostDB()
   .then(() => {
     console.log("Postgres connection established successfully");
@@ -31,6 +32,7 @@ connectPostDB()
     console.error("Postgres connection error:", err);
     process.exit(1);
   });
+  */
 
 const PORT = process.env.PORT || 5000;
 

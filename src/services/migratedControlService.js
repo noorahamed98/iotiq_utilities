@@ -1,38 +1,35 @@
 /**
- * Migrated Control Service Helper
+ * Control Service Helper - MongoDB Only
  * 
- * This service provides helper functions to replace PostgreSQL queries
- * in controlService.js with MongoDB equivalents when using migrated data.
+ * This service provides helper functions to query MongoDB for device control operations
  */
 
 import mongoose from "mongoose";
-
-
-/**
- * Helper functions to read thingid and response documents from MongoDB.
- * Assumes a Mongo connection (mongoose) is already established elsewhere in app.
- */
+import logger from "../utils/logger.js";
 
 const db = () => mongoose.connection.db;
 
 /**
- * Attempt to find thingid by deviceid.
- * Checks in 'sensor_data' collection first, then falls back to looking through users.spaces.devices.
+ * Get thingid by deviceid from MongoDB
+ * Checks in sensor_metadata collection first, then falls back to users.spaces.devices
  */
 export async function getThingIdByDeviceId(deviceid) {
-  if (!deviceid) return null;
+  if (!deviceid) {
+    logger.warn('getThingIdByDeviceId called without deviceid');
+    return null;
+  }
 
   const database = db();
 
-  // 1) Try sensor_data collection (if migration kept same collection name)
+  // 1) Try sensor_metadata collection
   try {
-    const sensorColl = database.collection("sensor_data");
+    const sensorColl = database.collection("sensor_metadata");
     const row = await sensorColl.findOne({ deviceid });
     if (row && (row.thingid || row.thingId || row.thing_id)) {
       return row.thingid || row.thingId || row.thing_id;
     }
   } catch (err) {
-    // ignore if collection missing
+    logger.error(`Error querying sensor_metadata: ${err.message}`);
   }
 
   // 2) Fallback: search users -> spaces -> devices
@@ -40,105 +37,143 @@ export async function getThingIdByDeviceId(deviceid) {
     const usersColl = database.collection("users");
     const userDoc = await usersColl.findOne(
       { "spaces.devices.device_id": deviceid },
-      { projection: { "spaces.$": 1 } }
+      { projection: { spaces: 1 } }
     );
 
-    if (userDoc && userDoc.spaces && userDoc.spaces.length) {
+    if (userDoc && userDoc.spaces) {
       for (const space of userDoc.spaces) {
         if (!space.devices) continue;
-        for (const d of space.devices) {
-          if (d.device_id === deviceid) {
-            // try common field names for thing id
-            return d.thingid || d.thingId || d.thing_id || d.thing || null;
+        for (const device of space.devices) {
+          if (device.device_id === deviceid) {
+            return device.thing_name || device.thingid || device.thingId || device.thing_id || null;
           }
         }
       }
     }
   } catch (err) {
-    // ignore
+    logger.error(`Error querying users collection: ${err.message}`);
   }
 
+  logger.warn(`No thingid found for deviceid: ${deviceid}`);
   return null;
 }
 
 /**
- * Poll the 'slave_response' collection in MongoDB for a matching thingid.
- * Returns the document or null on timeout.
- *
+ * Poll the device_responses collection in MongoDB for a matching thingid
+ * Returns the document or null on timeout
+ */
 export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 5000) {
   const database = db();
-  const coll = database.collection("slave_response");
+  const coll = database.collection("device_responses");
   const interval = 500;
   const start = Date.now();
 
-  while (Date.now() - start <(timeoutMs)) {
+  while (Date.now() - start < timeoutMs) {
     const since = new Date(Date.now() - 10000); // 10 seconds window
-    const doc = await coll.findOne(
-      { thingid, inserted_at: { $gte: since } },
-      { sort: { inserted_at: -1 } }
-    );
-    if (doc) return sanitizeMongoDoc(doc);
+    
+    try {
+      const doc = await coll.findOne(
+        { 
+          thingid, 
+          inserted_at: { $gte: since },
+          response_type: 'slave_response'
+        },
+        { sort: { inserted_at: -1 } }
+      );
+      
+      if (doc) {
+        logger.info(`✅ Slave response found for thingid: ${thingid}`);
+        return sanitizeMongoDoc(doc);
+      }
+    } catch (err) {
+      logger.error(`Error polling slave response: ${err.message}`);
+    }
 
-    await new Promise((r) => setTimeout(r, interval));
+    await new Promise((resolve) => setTimeout(resolve, interval));
   }
 
+  logger.warn(`Timeout waiting for slave response for thingid: ${thingid}`);
   return null;
 }
-  */
 
 /**
- * Check base responded by looking in 'tank_data' collection for alive_reply.
+ * Check if base device responded by looking in tank_readings collection for alive_reply
  */
 export async function checkBaseRespondedInMongo(deviceid, timeoutMs = 5000) {
   const database = db();
-  const coll = database.collection("tank_data");
+  const coll = database.collection("tank_readings");
   const pollInterval = 1000;
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
     const since = new Date(Date.now() - 10000);
-    const doc = await coll.findOne(
-      {
-        deviceid,
-        message_type: "alive_reply",
-        timestamp: { $gte: since }
-      },
-      { sort: { timestamp: -1 } }
-    );
+    
+    try {
+      const doc = await coll.findOne(
+        {
+          deviceid,
+          message_type: "alive_reply",
+          timestamp: { $gte: since }
+        },
+        { sort: { timestamp: -1 } }
+      );
 
-    if (doc) return true;
-    await new Promise((r) => setTimeout(r, pollInterval));
+      if (doc) {
+        logger.info(`✅ Base device ${deviceid} responded`);
+        return true;
+      }
+    } catch (err) {
+      logger.error(`Error checking base response: ${err.message}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
+
+  logger.warn(`Base device ${deviceid} did not respond within ${timeoutMs}ms`);
   return false;
 }
 
 /**
- * Check tank responded by looking in 'tank_data' collection for update of sensor_no.
+ * Check if tank device responded by looking in tank_readings collection for update of sensor_no
  */
 export async function checkTankRespondedInMongo(deviceid, sensorNo, timeoutMs = 10000) {
   const database = db();
-  const coll = database.collection("tank_data");
+  const coll = database.collection("tank_readings");
   const pollInterval = 1000;
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
     const since = new Date(Date.now() - 10000);
-    const doc = await coll.findOne(
-      {
-        deviceid,
-        sensor_no: sensorNo,
-        message_type: "update",
-        timestamp: { $gte: since }
-      },
-      { sort: { timestamp: -1 } }
-    );
+    
+    try {
+      const doc = await coll.findOne(
+        {
+          deviceid,
+          sensor_no: sensorNo,
+          message_type: "update",
+          timestamp: { $gte: since }
+        },
+        { sort: { timestamp: -1 } }
+      );
 
-    if (doc) return true;
-    await new Promise((r) => setTimeout(r, pollInterval));
+      if (doc) {
+        logger.info(`✅ Tank device ${deviceid} (${sensorNo}) responded`);
+        return true;
+      }
+    } catch (err) {
+      logger.error(`Error checking tank response: ${err.message}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
+
+  logger.warn(`Tank device ${deviceid} (${sensorNo}) did not respond within ${timeoutMs}ms`);
   return false;
 }
 
+/**
+ * Sanitize MongoDB document by converting _id to string
+ */
 function sanitizeMongoDoc(doc) {
   if (!doc) return doc;
   const sanitized = { ...doc };
@@ -147,123 +182,32 @@ function sanitizeMongoDoc(doc) {
 }
 
 /**
- * Get thing ID for a device (replaces PostgreSQL sensor_data query)
- * @param {string} deviceId - Device ID
- * @returns {Promise<string|null>} Thing ID
+ * Get recent device responses from MongoDB
  */
-export async function getThingIdFromMongoDB(deviceId) {
+export async function getRecentDeviceResponses(thingid, seconds = 10) {
+  const database = db();
+  const coll = database.collection("device_responses");
+  const cutoffTime = new Date(Date.now() - (seconds * 1000));
+
   try {
-    const thingId = await getThingIdByDeviceId(deviceId); // Use the imported function
-    return thingId;
-  } catch (error) {
-    console.error('Error fetching thing ID from MongoDB:', error);
-    throw error;
+    const results = await coll.find({
+      thingid,
+      inserted_at: { $gte: cutoffTime }
+    })
+    .sort({ inserted_at: -1 })
+    .toArray();
+
+    return results.map(sanitizeMongoDoc);
+  } catch (err) {
+    logger.error(`Error getting recent device responses: ${err.message}`);
+    return [];
   }
-}
-
-/**
- * Wait for slave response (replaces PostgreSQL slave_response polling)
- * @param {string} thingId - Thing ID
- * @param {number} maxWait - Maximum wait time in milliseconds
- * @returns {Promise<Object|null>} Response data or null if timeout
- */
-export async function waitForSlaveResponseFromMongoDB(thingId, maxWait = 10000) {
-  const interval = 500; // poll every 0.5 seconds
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWait) {
-    try {
-      const responses = await getRecentDeviceResponses(thingId, 10);
-      
-      if (responses && responses.length > 0) {
-        // Return the most recent response
-        return responses[0].response_data;
-      }
-      
-      // Wait before next poll
-      await new Promise(resolve => setTimeout(resolve, interval));
-    } catch (error) {
-      console.error('Error polling for slave response from MongoDB:', error);
-      throw error;
-    }
-  }
-
-  return null; // Timeout
-}
-
-/**
- * Wait for alive reply (replaces PostgreSQL tank_data polling for alive_reply)
- * @param {string} deviceId - Device ID
- * @param {number} maxWait - Maximum wait time in milliseconds
- * @returns {Promise<Object|null>} Response data or null if timeout
- */
-export async function waitForAliveReplyFromMongoDB(deviceId, maxWait = 10000) {
-  const interval = 500; // poll every 0.5 seconds
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWait) {
-    try {
-      const responses = await getTankDataByMessageType(deviceId, 'alive_reply', null, 10);
-      
-      if (responses && responses.length > 0) {
-        // Return the most recent response
-        return responses[0];
-      }
-      
-      // Wait before next poll
-      await new Promise(resolve => setTimeout(resolve, interval));
-    } catch (error) {
-      console.error('Error polling for alive reply from MongoDB:', error);
-      throw error;
-    }
-  }
-
-  return null; // Timeout
-}
-
-/**
- * Wait for sensor update (replaces PostgreSQL tank_data polling for update messages)
- * @param {string} deviceId - Device ID
- * @param {string} sensorNo - Sensor number
- * @param {number} maxWait - Maximum wait time in milliseconds
- * @returns {Promise<Object|null>} Response data or null if timeout
- */
-export async function waitForSensorUpdateFromMongoDB(deviceId, sensorNo, maxWait = 10000) {
-  const interval = 500; // poll every 0.5 seconds
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWait) {
-    try {
-      const responses = await getTankDataByMessageType(deviceId, 'update', sensorNo, 10);
-      
-      if (responses && responses.length > 0) {
-        // Return the most recent response
-        return responses[0];
-      }
-      
-      // Wait before next poll
-      await new Promise(resolve => setTimeout(resolve, interval));
-    } catch (error) {
-      console.error('Error polling for sensor update from MongoDB:', error);
-      throw error;
-    }
-  }
-
-  return null; // Timeout
-}
-
-/**
- * Helper function to determine if MongoDB should be used
- * @returns {boolean} True if MongoDB should be used
- */
-export function shouldUseMongoDB() {
-  return process.env.USE_MIGRATED_DATA === 'true';
 }
 
 export default {
-  getThingIdFromMongoDB,
+  getThingIdByDeviceId,
   waitForSlaveResponseFromMongoDB,
-  waitForAliveReplyFromMongoDB,
-  waitForSensorUpdateFromMongoDB,
-  shouldUseMongoDB
+  checkBaseRespondedInMongo,
+  checkTankRespondedInMongo,
+  getRecentDeviceResponses
 };

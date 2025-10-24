@@ -1,3 +1,4 @@
+// controlService.js - MongoDB Only Version
 import AWS from "aws-sdk";
 import {
   getThingIdByDeviceId,
@@ -5,18 +6,21 @@ import {
   checkBaseRespondedInMongo,
   checkTankRespondedInMongo,
 } from "../services/migratedControlService.js";
+import logger from "../utils/logger.js";
 
 const iotData = new AWS.IotData({
   endpoint: process.env.IOT_ENDPOINT,
-  region: "ap-south-1",
+  region: process.env.AWS_REGION || "ap-south-1",
 });
 
-
+/**
+ * Control device via AWS IoT MQTT
+ */
 export async function control(req, res) {
-  // const client = req.app.locals.dbClient;
-  console.log("Using MongoDB path for control");
-  console.log("Authenticated user:", req.user);
-  console.log("🚀 CONTROL ENDPOINT REACHED - This should only appear if auth passes!");
+  logger.info("🚀 CONTROL endpoint called", {
+    user: req.user?.mobile_number,
+    deviceid: req.body?.deviceid
+  });
 
   try {
     const { deviceid } = req.body;
@@ -28,11 +32,12 @@ export async function control(req, res) {
       });
     }
 
+    // Get thing ID from MongoDB
     const thingid = await getThingIdByDeviceId(deviceid);
     if (!thingid) {
       return res.status(404).json({
         success: false,
-        error: "DeviceId not found"
+        error: "DeviceId not found or no associated thing ID"
       });
     }
 
@@ -44,9 +49,16 @@ export async function control(req, res) {
       timestamp: new Date().toISOString()
     });
 
+    // Publish to AWS IoT
     await iotData
       .publish({ topic, payload, qos: 0 })
       .promise();
+
+    logger.info("✅ Control command published", {
+      topic,
+      deviceid,
+      user: req.user?.mobile_number
+    });
 
     res.status(200).json({
       success: true,
@@ -55,44 +67,49 @@ export async function control(req, res) {
       user: req.user?.mobile_number
     });
   } catch (error) {
-    console.error("Publish error:", error);
+    logger.error("❌ Control publish error:", error);
     res.status(500).json({
       success: false,
       error: "Internal Server Error",
       details: error.message
     });
   }
-};
+}
 
-export async function setting(client, deviceid, payload) {
+/**
+ * Send device settings via AWS IoT MQTT
+ */
+export async function setting(deviceid, payload) {
   try {
-    // accept either original signature (client param) or use mongo
+    // Get thing ID from MongoDB
     const thingid = await getThingIdByDeviceId(deviceid);
     if (!thingid) {
       throw new Error(`No thingid found for deviceid: ${deviceid}`);
     }
 
     const topic = `mqtt/device/${thingid}/setting`;
-    console.log(topic);
     const finalPayload = JSON.stringify(payload);
 
     await iotData
       .publish({ topic, payload: finalPayload, qos: 0 })
       .promise();
 
-    console.log(`✅ Payload published to topic: ${topic}`);
+    logger.info(`✅ Settings published to topic: ${topic}`, { deviceid, thingid });
     return { success: true, topic };
   } catch (error) {
-    console.error("❌ Publish error in setting():", error);
+    logger.error("❌ Settings publish error:", error);
     throw new Error(`MQTT Publish Failed: ${error.message}`);
   }
 }
 
+/**
+ * Send slave request and wait for response
+ */
 export async function slaveRequest(req, res) {
-  // const client = req.app.locals.dbClient;
-  console.log("Using MongoDB path for slaveRequest");
-  console.log("Authenticated user:", req.user);
-  console.log("🚀 SLAVE REQUEST ENDPOINT REACHED");
+  logger.info("🚀 SLAVE REQUEST endpoint called", {
+    user: req.user?.mobile_number,
+    deviceid: req.body?.deviceid
+  });
 
   try {
     const { deviceid } = req.body;
@@ -104,18 +121,21 @@ export async function slaveRequest(req, res) {
       });
     }
 
+    // Get thing ID from MongoDB
     const thingid = await getThingIdByDeviceId(deviceid);
     if (!thingid) {
       return res.status(404).json({
         success: false,
-        error: "DeviceId not found"
+        error: "DeviceId not found or no associated thing ID"
       });
     }
 
     const requestTopic = `mqtt/device/${thingid}/slave_request`;
 
     const payload = JSON.stringify({
-      ...req.body
+      ...req.body,
+      requestedBy: req.user?.mobile_number,
+      timestamp: new Date().toISOString()
     });
 
     // Publish using AWS IoT Core
@@ -124,24 +144,25 @@ export async function slaveRequest(req, res) {
       payload,
       qos: 0
     }).promise();
-    console.log("✅ Payload published to:", requestTopic);
+
+    logger.info("✅ Slave request published to:", requestTopic);
 
     // Poll MongoDB for response
     const response = await waitForSlaveResponseFromMongoDB(thingid, 5000);
 
     return res.status(200).json({
       success: true,
-      message: "Published and response received",
+      message: response ? "Published and response received" : "Published but no response received",
       topic: requestTopic,
       data: response ? {
-        ...response,
-        channel: response.channel ? parseInt(response.channel) : response.channel
+        ...response.response_data,
+        channel: response.response_data?.channel ? parseInt(response.response_data.channel) : response.response_data?.channel
       } : null,
       user: req.user?.mobile_number
     });
 
   } catch (error) {
-    console.error("slaveRequest error:", error);
+    logger.error("❌ Slave request error:", error);
     return res.status(500).json({
       success: false,
       error: "Internal Server Error",
@@ -150,16 +171,24 @@ export async function slaveRequest(req, res) {
   }
 }
 
+/**
+ * Check if base device responded
+ */
 export async function isBaseResponded(req, res) {
   const { deviceid } = req.params;
-  // const client = req.app.locals.dbClient;
 
   if (!deviceid) {
-    return res.status(400).json({ success: false, message: 'Device ID is required.' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Device ID is required.' 
+    });
   }
 
   try {
+    logger.info(`Checking base response for device: ${deviceid}`);
+    
     const responded = await checkBaseRespondedInMongo(deviceid, 5000);
+    
     if (responded) {
       return res.status(200).json({
         success: true,
@@ -169,28 +198,36 @@ export async function isBaseResponded(req, res) {
 
     return res.status(404).json({
       success: false,
-      message: 'Base is not responded.'
+      message: 'Base did not respond.'
     });
   } catch (error) {
-    console.error('Error checking base response:', error);
+    logger.error('Error checking base response:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error.'
+      message: 'Internal server error.',
+      details: error.message
     });
   }
 }
 
-
+/**
+ * Check if tank device responded
+ */
 export async function isTankResponded(req, res) {
   const { deviceid, sensorNumber } = req.params;
-  // const client = req.app.locals.dbClient;
 
   if (!deviceid || !sensorNumber) {
-    return res.status(400).json({ success: false, message: 'Device ID and Sensor Number is required.' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Device ID and Sensor Number are required.' 
+    });
   }
 
   try {
+    logger.info(`Checking tank response for device: ${deviceid}, sensor: ${sensorNumber}`);
+    
     const responded = await checkTankRespondedInMongo(deviceid, sensorNumber, 10000);
+    
     if (responded) {
       return res.status(200).json({
         success: true,
@@ -200,13 +237,22 @@ export async function isTankResponded(req, res) {
 
     return res.status(404).json({
       success: false,
-      message: 'Tank is not responded.'
+      message: 'Tank did not respond.'
     });
   } catch (error) {
-    console.error('Error checking tank response:', error);
+    logger.error('Error checking tank response:', error);
     return res.status(500).json({
       success: false,
-      message: 'Internal server error.'
+      message: 'Internal server error.',
+      details: error.message
     });
   }
 }
+
+export default {
+  control,
+  setting,
+  slaveRequest,
+  isBaseResponded,
+  isTankResponded
+};

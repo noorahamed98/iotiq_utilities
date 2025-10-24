@@ -1,110 +1,172 @@
-// src/services/setupService.js - FIXED VERSION
+// src/services/setupService.js - Modified for New MQTT Format
 import { User } from "../config/dbconfig.js";
 import mongoose from "mongoose";
 import logger from "../utils/logger.js";
-import { setting } from "./controlService.js";
-import { client } from "../config/postgres.js";
 import AWS from "aws-sdk";
 
 // Initialize AWS IoT Data client for direct control calls
 const iotData = new AWS.IotData({
   endpoint: process.env.IOT_ENDPOINT,
-  region: "ap-south-1",
+  region: process.env.AWS_REGION || "ap-south-1",
 });
 
 /**
- * Helper function to automatically control base devices after setting is published
- * @param {Object} condition - The condition object containing device info and actions
- * @param {Object} client - PostgreSQL client
+ * Helper function to get device thingId from MongoDB
  */
-async function autoControlBaseDevices(condition, client) {
+async function getThingIdByDeviceId(deviceId) {
   try {
-    // Only auto-control if condition device is base type
-    if (condition.device_type === "base") {
-      logger.info(`Auto-controlling base device: ${condition.device_id}`);
-      
-      // Get thingid for the condition device
-      const result = await client.query(
-        "SELECT thingid FROM sensor_data WHERE deviceid = $1 LIMIT 1",
-        [condition.device_id]
-      );
+    const db = mongoose.connection.db;
+    
+    // Try sensor_metadata collection first
+    const sensorColl = db.collection("sensor_metadata");
+    const row = await sensorColl.findOne({ deviceid: deviceId });
+    if (row && (row.thingid || row.thingId || row.thing_id)) {
+      return row.thingid || row.thingId || row.thing_id;
+    }
 
-      if (result.rowCount === 0) {
-        logger.error(`No thingid found for condition device: ${condition.device_id}`);
-        return;
+    // Fallback: search users -> spaces -> devices
+    const usersColl = db.collection("users");
+    const userDoc = await usersColl.findOne(
+      { "spaces.devices.device_id": deviceId },
+      { projection: { spaces: 1 } }
+    );
+
+    if (userDoc && userDoc.spaces) {
+      for (const space of userDoc.spaces) {
+        if (!space.devices) continue;
+        for (const device of space.devices) {
+          if (device.device_id === deviceId) {
+            return device.thing_name || device.thingid || device.thingId || device.thing_id || null;
+          }
+        }
       }
+    }
 
-      const thingid = result.rows[0].thingid;
-      const controlTopic = `mqtt/device/${thingid}/control`;
+    logger.warn(`No thingid found for deviceid: ${deviceId}`);
+    return null;
+  } catch (error) {
+    logger.error(`Error getting thingId: ${error.message}`);
+    return null;
+  }
+}
 
-      // Prepare control payload for the condition device
-      const controlPayload = {
-        deviceid: condition.device_id,
-        switch_no: condition.switch_no,
-        status: condition.status,
-        timestamp: new Date().toISOString(),
-        source: "auto_setup_control"
-      };
+/**
+ * Convert action object to action code format
+ * Example: { device_id: "MC1", switch_no: "BM1", set_status: "on" } -> "MC1S1ON"
+ */
+function convertActionToCode(action, devices) {
+  try {
+    const actionDevice = devices.find(d => d.device_id === action.device_id);
+    if (!actionDevice) {
+      logger.error(`Action device ${action.device_id} not found`);
+      return null;
+    }
 
-      // Publish control command
-      await iotData.publish({
-        topic: controlTopic,
-        payload: JSON.stringify(controlPayload),
-        qos: 0
-      }).promise();
+    // Extract device type prefix (MC, VC, etc.)
+    let deviceType = "MC"; // Default to Motor Controller
+    if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
+      deviceType = "VC";
+    } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
+      deviceType = "MC";
+    }
 
-      logger.info(`✅ Auto-control published for device ${condition.device_id} to topic: ${controlTopic}`);
+    // Extract device number from device_id (e.g., "MC1" -> "1")
+    const deviceNumberMatch = action.device_id.match(/\d+/);
+    const deviceNumber = deviceNumberMatch ? deviceNumberMatch[0] : "1";
 
-      // Also auto-control action devices if they are base modules
-      if (condition.actions && condition.actions.length > 0) {
-        for (const action of condition.actions) {
-          try {
-            // Get thingid for action device
-            const actionResult = await client.query(
-              "SELECT thingid FROM sensor_data WHERE deviceid = $1 LIMIT 1",
-              [action.device_id]
-            );
+    // Extract switch number from switch_no (BM1 -> S1, BM2 -> S2)
+    const switchNumber = action.switch_no === "BM2" ? "2" : "1";
 
-            if (actionResult.rowCount === 0) {
-              logger.error(`No thingid found for action device: ${action.device_id}`);
-              continue;
-            }
+    // Convert status to uppercase
+    const status = action.set_status.toUpperCase();
 
-            const actionThingid = actionResult.rows[0].thingid;
-            const actionControlTopic = `mqtt/device/${actionThingid}/control`;
+    // Build action code: MC1S1ON, VC2S2OFF, etc.
+    return `${deviceType}${deviceNumber}S${switchNumber}${status}`;
+  } catch (error) {
+    logger.error(`Error converting action to code: ${error.message}`);
+    return null;
+  }
+}
 
-            // Prepare control payload for action device
-            const actionControlPayload = {
-              deviceid: action.device_id,
-              switch_no: action.switch_no,
-              status: action.set_status,
-              timestamp: new Date().toISOString(),
-              source: "auto_setup_action_control",
-              delay: action.delay || 0
-            };
+/**
+ * Auto-control base devices after setting is published
+ */
+async function autoControlBaseDevices(condition, space) {
+  try {
+    if (condition.device_type !== "base") {
+      return;
+    }
 
-            // Add delay if specified
-            if (action.delay && action.delay > 0) {
-              setTimeout(async () => {
-                await iotData.publish({
-                  topic: actionControlTopic,
-                  payload: JSON.stringify(actionControlPayload),
-                  qos: 0
-                }).promise();
-                logger.info(`✅ Delayed auto-control published for action device ${action.device_id}`);
-              }, action.delay * 1000);
-            } else {
+    logger.info(`Auto-controlling base device: ${condition.device_id}`);
+    
+    const thingid = await getThingIdByDeviceId(condition.device_id);
+    if (!thingid) {
+      logger.error(`No thingid found for condition device: ${condition.device_id}`);
+      return;
+    }
+
+    const controlTopic = `mqtt/device/${thingid}/control`;
+
+    // Prepare control payload for the condition device
+    const controlPayload = {
+      deviceid: condition.device_id,
+      switch_no: condition.switch_no,
+      status: condition.status,
+      timestamp: new Date().toISOString(),
+      source: "auto_setup_control"
+    };
+
+    // Publish control command
+    await iotData.publish({
+      topic: controlTopic,
+      payload: JSON.stringify(controlPayload),
+      qos: 0
+    }).promise();
+
+    logger.info(`✅ Auto-control published for device ${condition.device_id} to topic: ${controlTopic}`);
+
+    // Auto-control action devices if they are base modules
+    if (condition.actions && condition.actions.length > 0) {
+      for (const action of condition.actions) {
+        try {
+          const actionThingid = await getThingIdByDeviceId(action.device_id);
+          if (!actionThingid) {
+            logger.error(`No thingid found for action device: ${action.device_id}`);
+            continue;
+          }
+
+          const actionControlTopic = `mqtt/device/${actionThingid}/control`;
+
+          const actionControlPayload = {
+            deviceid: action.device_id,
+            switch_no: action.switch_no,
+            status: action.set_status,
+            timestamp: new Date().toISOString(),
+            source: "auto_setup_action_control",
+            delay: action.delay || 0
+          };
+
+          // Add delay if specified
+          if (action.delay && action.delay > 0) {
+            setTimeout(async () => {
               await iotData.publish({
                 topic: actionControlTopic,
                 payload: JSON.stringify(actionControlPayload),
                 qos: 0
               }).promise();
-              logger.info(`✅ Auto-control published for action device ${action.device_id} to topic: ${actionControlTopic}`);
-            }
-
-          } catch (actionError) {
-            logger.error(`Error auto-controlling action device ${action.device_id}: ${actionError.message}`);
+              logger.info(`✅ Delayed auto-control published for action device ${action.device_id}`);
+            }, action.delay * 1000);
+          } else {
+            await iotData.publish({
+              topic: actionControlTopic,
+              payload: JSON.stringify(actionControlPayload),
+              qos: 0
+            }).promise();
+            logger.info(`✅ Auto-control published for action device ${action.device_id}`);
           }
+
+        } catch (actionError) {
+          logger.error(`Error auto-controlling action device ${action.device_id}: ${actionError.message}`);
         }
       }
     }
@@ -114,11 +176,32 @@ async function autoControlBaseDevices(condition, client) {
 }
 
 /**
+ * Publish setting to MQTT
+ */
+async function publishSetting(deviceId, payload) {
+  try {
+    const thingid = await getThingIdByDeviceId(deviceId);
+    if (!thingid) {
+      throw new Error(`No thingid found for deviceid: ${deviceId}`);
+    }
+
+    const topic = `mqtt/device/${thingid}/setting`;
+    const finalPayload = JSON.stringify(payload);
+
+    await iotData
+      .publish({ topic, payload: finalPayload, qos: 0 })
+      .promise();
+
+    logger.info(`✅ Settings published to topic: ${topic}`, { deviceId, thingid });
+    return { success: true, topic };
+  } catch (error) {
+    logger.error("❌ Settings publish error:", error);
+    throw new Error(`MQTT Publish Failed: ${error.message}`);
+  }
+}
+
+/**
  * Create a new setup configuration for a space
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {Object} setupData - Setup configuration data
- * @returns {Object} The created setup configuration
  */
 export async function createSetup(mobileNumber, spaceId, setupData) {
   try {
@@ -127,7 +210,6 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       throw new Error("User not found");
     }
 
-    // Find the space to update
     const spaceIndex = user.spaces.findIndex(
       (space) => space._id.toString() === spaceId
     );
@@ -155,43 +237,36 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
     // Validate condition specifics
     if (conditionDevice.device_type === "base") {
-      if (
-        !setupData.condition.status ||
-        !["on", "off"].includes(setupData.condition.status)
-      ) {
-        throw new Error(
-          "Status field is required and must be 'on' or 'off' for base devices"
-        );
+      if (!setupData.condition.status || !["on", "off"].includes(setupData.condition.status)) {
+        throw new Error("Status field is required and must be 'on' or 'off' for base devices");
       }
       
-      // Validate switch_no for base devices
-      if (
-        !setupData.condition.switch_no ||
-        !["BM1", "BM2"].includes(setupData.condition.switch_no)
-      ) {
-        throw new Error(
-          "switch_no field is required and must be 'BM1' or 'BM2' for base devices"
-        );
+      if (!setupData.condition.switch_no || !["BM1", "BM2"].includes(setupData.condition.switch_no)) {
+        throw new Error("switch_no field is required and must be 'BM1' or 'BM2' for base devices");
       }
     }
 
     if (conditionDevice.device_type === "tank") {
-      // Validate maximum parameter
-      if (typeof setupData.condition.maximum !== 'number' || 
-          setupData.condition.maximum < 0 || 
-          setupData.condition.maximum > 100) {
-        throw new Error("Maximum must be a number between 0 and 100 for tank devices");
+      // Validate Trigger and Stop values
+      if (typeof setupData.condition.trigger !== 'number' || 
+          setupData.condition.trigger < 0 || 
+          setupData.condition.trigger > 100) {
+        throw new Error("Trigger must be a number between 0 and 100 for tank devices");
       }
 
-      // Validate minimum parameter
-      if (typeof setupData.condition.minimum !== 'number' || 
-          setupData.condition.minimum < 0 || 
-          setupData.condition.minimum > 100) {
-        throw new Error("Minimum must be a number between 0 and 100 for tank devices");
+      if (typeof setupData.condition.stop !== 'number' || 
+          setupData.condition.stop < 0 || 
+          setupData.condition.stop > 100) {
+        throw new Error("Stop must be a number between 0 and 100 for tank devices");
       }
 
-      if (setupData.condition.minimum >= setupData.condition.maximum) {
-        throw new Error("Minimum must be less than maximum");
+      if (setupData.condition.trigger >= setupData.condition.stop) {
+        throw new Error("Trigger must be less than Stop value");
+      }
+
+      // Validate slot
+      if (!setupData.condition.slot || !["Primary1", "Primary2", "Secondary"].includes(setupData.condition.slot)) {
+        throw new Error("Slot field is required and must be 'Primary1', 'Primary2', or 'Secondary' for tank devices");
       }
     }
 
@@ -202,29 +277,20 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
         (device) => device.device_id === actionDeviceId
       );
       if (!actionDevice) {
-        throw new Error(
-          `Action device with ID '${actionDeviceId}' not found in this space`
-        );
+        throw new Error(`Action device with ID '${actionDeviceId}' not found in this space`);
       }
       if (actionDevice.device_type !== "base") {
-        throw new Error(
-          `Device '${actionDeviceId}' must be of type 'base' to be used in actions`
-        );
+        throw new Error(`Device '${actionDeviceId}' must be of type 'base' to be used in actions`);
       }
       if (!action.set_status || !["on", "off"].includes(action.set_status)) {
-        throw new Error(
-          "set_status field is required and must be 'on' or 'off' for actions"
-        );
+        throw new Error("set_status field is required and must be 'on' or 'off' for actions");
       }
-      // Validate switch_no for each action
       if (!action.switch_no || !["BM1", "BM2"].includes(action.switch_no)) {
-        throw new Error(
-          "switch_no field is required and must be 'BM1' or 'BM2' for each action"
-        );
+        throw new Error("switch_no field is required and must be 'BM1' or 'BM2' for each action");
       }
     }
 
-    // Create condition object with proper switch_no handling
+    // Create condition object
     const conditionData = {
       device_id: setupData.condition.device_id,
       device_type: setupData.condition.device_type,
@@ -237,9 +303,10 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       conditionData.switch_no = setupData.condition.switch_no;
     } else if (setupData.condition.device_type === "tank") {
       conditionData.level = setupData.condition.level;
-      conditionData.minimum = setupData.condition.minimum;
-      conditionData.maximum = setupData.condition.maximum;
-      conditionData.operator = setupData.condition.operator;
+      conditionData.trigger = setupData.condition.trigger;
+      conditionData.stop = setupData.condition.stop;
+      conditionData.slot = setupData.condition.slot;
+      conditionData.operator = setupData.condition.operator || "<";
     }
 
     // Create the new setup
@@ -260,35 +327,37 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
     user.spaces[spaceIndex].setups.push(newSetup);
 
-    // ✅ CRITICAL FIX: Save the user document to database BEFORE MQTT operations
+    // Save to database BEFORE MQTT operations
     await user.save();
     logger.info(`Setup saved to database for space ${spaceId}`);
 
-    // Now handle MQTT operations
+    // Handle MQTT operations
     try {
       if (setupData.condition.device_type === "tank") {
-        let mqttPayload = {};
+        // Convert actions to action codes (A1, A2, A3)
+        const actionCodes = {};
+        setupData.condition.actions.forEach((action, index) => {
+          const actionCode = convertActionToCode(action, space.devices);
+          if (actionCode) {
+            actionCodes[`A${index + 1}`] = actionCode;
+          }
+        });
 
-        // Use the first action's switch_no for MQTT payload
-        const firstAction = setupData.condition.actions[0];
-        
-        mqttPayload = {
+        // Build NEW MQTT payload format
+        const mqttPayload = {
           deviceid: conditionDevice.device_id,
-          sensor_no: conditionDevice.sensor_no || "TM1",
-          switch_no: firstAction.switch_no,
-          maximum: setupData.condition.maximum?.toString(),
-          minimum: setupData.condition.minimum?.toString()
+          sensor_no: conditionDevice.slave_name || "TM1",
+          slot: setupData.condition.slot,
+          Trigger: setupData.condition.trigger.toString(),
+          Stop: setupData.condition.stop.toString(),
+          ...actionCodes // Add A1, A2, A3, etc.
         };
 
-        // Publish setting first
-        await setting(client, firstAction.device_id, mqttPayload);
-        logger.info(`✅ Setting published for tank device ${conditionDevice.device_id}`);
-
-        // No auto-control for tank devices since they are sensors
+        // Publish setting
+        await publishSetting(conditionDevice.device_id, mqttPayload);
+        logger.info(`✅ Setting published for tank device ${conditionDevice.device_id}`, { mqttPayload });
         
-      } 
-      // Add MQTT publishing for base devices
-      else if (setupData.condition.device_type === "base") {
+      } else if (setupData.condition.device_type === "base") {
         const mqttPayload = {
           deviceid: setupData.condition.device_id,
           switch_no: setupData.condition.switch_no,
@@ -303,12 +372,12 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           }))
         };
 
-        // Publish setting first
-        await setting(client, setupData.condition.device_id, mqttPayload);
+        // Publish setting
+        await publishSetting(setupData.condition.device_id, mqttPayload);
         logger.info(`✅ Setting published for base device ${setupData.condition.device_id}`);
 
-        // ✅ NEW: Auto-control base devices after setting is published
-        await autoControlBaseDevices(setupData.condition, client);
+        // Auto-control base devices
+        await autoControlBaseDevices(setupData.condition, space);
       }
     } catch (mqttError) {
       logger.error(`MQTT publishing failed, but setup was saved to DB: ${mqttError.message}`);
@@ -324,11 +393,6 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
 
 /**
  * Update a setup configuration
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {String} setupId - Setup ID
- * @param {Object} setupData - Updated setup data
- * @returns {Object} The updated setup configuration
  */
 export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
   try {
@@ -344,7 +408,6 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
       throw new Error("Space not found");
     }
 
-    // Find the setup to update
     const setupIndex = user.spaces[spaceIndex].setups?.findIndex(
       (setup) => setup._id.toString() === setupId
     );
@@ -353,103 +416,75 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
       throw new Error("Setup not found");
     }
 
-    // Get the current setup
-    const currentSetup = user.spaces[spaceIndex].setups[setupIndex];
+    const space = user.spaces[spaceIndex];
 
     // If condition is being updated, validate new condition
     if (setupData.condition) {
       const conditionDeviceId = setupData.condition.device_id;
-      const conditionDevice = user.spaces[spaceIndex].devices.find(
+      const conditionDevice = space.devices.find(
         (device) => device.device_id === conditionDeviceId
       );
 
       if (!conditionDevice) {
-        throw new Error(
-          `Condition device with ID '${conditionDeviceId}' not found in this space`
-        );
+        throw new Error(`Condition device with ID '${conditionDeviceId}' not found in this space`);
       }
 
-      // Validate device type
       if (conditionDevice.device_type !== setupData.condition.device_type) {
-        throw new Error(
-          `Device type mismatch. Device '${conditionDeviceId}' is of type '${conditionDevice.device_type}', not '${setupData.condition.device_type}'`
-        );
+        throw new Error(`Device type mismatch`);
       }
 
       // Validate conditions based on device type
       if (conditionDevice.device_type === "base") {
-        if (
-          !setupData.condition.status ||
-          !["on", "off"].includes(setupData.condition.status)
-        ) {
-          throw new Error(
-            "Status field is required and must be 'on' or 'off' for base devices"
-          );
+        if (!setupData.condition.status || !["on", "off"].includes(setupData.condition.status)) {
+          throw new Error("Status field is required and must be 'on' or 'off' for base devices");
         }
         
-        // Validate switch_no in update
-        if (
-          !setupData.condition.switch_no ||
-          !["BM1", "BM2"].includes(setupData.condition.switch_no)
-        ) {
-          throw new Error(
-            "switch_no field is required and must be 'BM1' or 'BM2' for base devices"
-          );
+        if (!setupData.condition.switch_no || !["BM1", "BM2"].includes(setupData.condition.switch_no)) {
+          throw new Error("switch_no field is required and must be 'BM1' or 'BM2' for base devices");
         }
       } else if (conditionDevice.device_type === "tank") {
-        // Validate maximum parameter
-        if (typeof setupData.condition.maximum !== 'number' || 
-            setupData.condition.maximum < 0 || 
-            setupData.condition.maximum > 100) {
-          throw new Error("Maximum must be a number between 0 and 100 for tank devices");
+        if (typeof setupData.condition.trigger !== 'number' || 
+            setupData.condition.trigger < 0 || 
+            setupData.condition.trigger > 100) {
+          throw new Error("Trigger must be a number between 0 and 100 for tank devices");
         }
 
-        // Validate minimum parameter
-        if (typeof setupData.condition.minimum !== 'number' || 
-            setupData.condition.minimum < 0 || 
-            setupData.condition.minimum > 100) {
-          throw new Error("Minimum must be a number between 0 and 100 for tank devices");
+        if (typeof setupData.condition.stop !== 'number' || 
+            setupData.condition.stop < 0 || 
+            setupData.condition.stop > 100) {
+          throw new Error("Stop must be a number between 0 and 100 for tank devices");
         }
 
-        if (setupData.condition.minimum >= setupData.condition.maximum) {
-          throw new Error("Minimum must be less than maximum");
+        if (setupData.condition.trigger >= setupData.condition.stop) {
+          throw new Error("Trigger must be less than Stop value");
+        }
+
+        if (!setupData.condition.slot || !["Primary1", "Primary2", "Secondary"].includes(setupData.condition.slot)) {
+          throw new Error("Slot field is required and must be 'Primary1', 'Primary2', or 'Secondary'");
         }
       }
 
       // Validate actions
       if (setupData.condition.actions) {
         for (const action of setupData.condition.actions) {
-          const actionDeviceId = action.device_id;
-          const actionDevice = user.spaces[spaceIndex].devices.find(
-            (device) => device.device_id === actionDeviceId
+          const actionDevice = space.devices.find(
+            (device) => device.device_id === action.device_id
           );
 
           if (!actionDevice) {
-            throw new Error(
-              `Action device with ID '${actionDeviceId}' not found in this space`
-            );
+            throw new Error(`Action device with ID '${action.device_id}' not found in this space`);
           }
 
           if (actionDevice.device_type !== "base") {
-            throw new Error(
-              `Device '${actionDeviceId}' must be of type 'base' to be used in actions`
-            );
+            throw new Error(`Device '${action.device_id}' must be of type 'base' to be used in actions`);
           }
 
-          if (
-            !action.set_status ||
-            !["on", "off"].includes(action.set_status)
-          ) {
-            throw new Error(
-              "set_status field is required and must be 'on' or 'off' for actions"
-            );
+          if (!action.set_status || !["on", "off"].includes(action.set_status)) {
+            throw new Error("set_status field is required and must be 'on' or 'off' for actions");
           }
           
-          // Validate switch_no for each action in update
           if (!action.switch_no || !["BM1", "BM2"].includes(action.switch_no)) {
-            throw new Error(
-              "switch_no field is required and must be 'BM1' or 'BM2' for each action"
-            );
+            throw new Error("switch_no field is required and must be 'BM1' or 'BM2' for each action");
           }
         }
       }
@@ -461,8 +496,7 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     }
 
     if (setupData.description !== undefined) {
-      user.spaces[spaceIndex].setups[setupIndex].description =
-        setupData.description;
+      user.spaces[spaceIndex].setups[setupIndex].description = setupData.description;
     }
 
     if (setupData.active !== undefined) {
@@ -473,42 +507,43 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
       user.spaces[spaceIndex].setups[setupIndex].condition = setupData.condition;
     }
 
-    // Update the updated_at timestamp
     user.spaces[spaceIndex].setups[setupIndex].updated_at = new Date();
 
-    // ✅ CRITICAL FIX: Save the updated user document BEFORE MQTT operations
+    // Save to database BEFORE MQTT operations
     await user.save();
     logger.info(`Setup updated and saved to database for space ${spaceId}`);
 
-    // Now handle MQTT operations (after successful DB save)
+    // Handle MQTT operations
     try {
       if (setupData.condition) {
-        const conditionDevice = user.spaces[spaceIndex].devices.find(
+        const conditionDevice = space.devices.find(
           (device) => device.device_id === setupData.condition.device_id
         );
 
         if (setupData.condition.device_type === "tank") {
-          let mqttPayload = {};
+          // Convert actions to action codes
+          const actionCodes = {};
+          setupData.condition.actions.forEach((action, index) => {
+            const actionCode = convertActionToCode(action, space.devices);
+            if (actionCode) {
+              actionCodes[`A${index + 1}`] = actionCode;
+            }
+          });
 
-          // Use the first action's switch_no for MQTT payload
-          const firstAction = setupData.condition.actions[0];
-
-          mqttPayload = {
+          // Build NEW MQTT payload format
+          const mqttPayload = {
             deviceid: conditionDevice.device_id,
-            sensor_no: conditionDevice.sensor_no || "TM1",
-            switch_no: firstAction.switch_no,
-            maximum: setupData.condition.maximum?.toString(),
-            minimum: setupData.condition.minimum?.toString()
+            sensor_no: conditionDevice.slave_name || "TM1",
+            slot: setupData.condition.slot,
+            Trigger: setupData.condition.trigger.toString(),
+            Stop: setupData.condition.stop.toString(),
+            ...actionCodes
           };
 
-          // Publish setting first
-          await setting(client, firstAction.device_id, mqttPayload);
-          logger.info(`✅ Setting updated for tank device ${conditionDevice.device_id}`);
-
-          // No auto-control for tank devices since they are sensors
-        } 
-        // Add MQTT publishing for base devices
-        else if (setupData.condition.device_type === "base") {
+          await publishSetting(conditionDevice.device_id, mqttPayload);
+          logger.info(`✅ Setting updated for tank device ${conditionDevice.device_id}`, { mqttPayload });
+          
+        } else if (setupData.condition.device_type === "base") {
           const updatedSetup = user.spaces[spaceIndex].setups[setupIndex];
           const mqttPayload = {
             deviceid: setupData.condition.device_id,
@@ -524,16 +559,14 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
             }))
           };
 
-          // Publish setting first
-          await setting(client, setupData.condition.device_id, mqttPayload);
+          await publishSetting(setupData.condition.device_id, mqttPayload);
           logger.info(`✅ Setting updated for base device ${setupData.condition.device_id}`);
 
-          // ✅ NEW: Auto-control base devices after setting is published
-          await autoControlBaseDevices(setupData.condition, client);
+          await autoControlBaseDevices(setupData.condition, space);
         }
       }
     } catch (mqttError) {
-      logger.error(`MQTT publishing failed during update, but changes were saved to DB: ${mqttError.message}`);
+      logger.error(`MQTT publishing failed during update: ${mqttError.message}`);
     }
 
     logger.info(`Setup updated successfully for space ${spaceId}`);
@@ -544,22 +577,10 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
   }
 }
 
-// ... (rest of the functions remain the same)
-
 /**
  * Update setup active status
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {String} setupId - Setup ID
- * @param {Boolean} active - New active status
- * @returns {Object} The updated setup
  */
-export async function updateSetupStatus(
-  mobileNumber,
-  spaceId,
-  setupId,
-  active
-) {
+export async function updateSetupStatus(mobileNumber, spaceId, setupId, active) {
   try {
     const user = await User.findOne({ mobile_number: mobileNumber });
     if (!user) {
@@ -580,14 +601,12 @@ export async function updateSetupStatus(
       throw new Error("Setup not found");
     }
 
-    // Update setup status
     user.spaces[spaceIndex].setups[setupIndex].active = active;
     user.spaces[spaceIndex].setups[setupIndex].updated_at = new Date();
 
-    // ✅ CRITICAL FIX: Save changes to database
     await user.save();
 
-    logger.info(`Setup ${setupId} status updated to ${active} and saved to DB`);
+    logger.info(`Setup ${setupId} status updated to ${active}`);
     return user.spaces[spaceIndex].setups[setupIndex];
   } catch (error) {
     logger.error(`Error updating setup status: ${error.message}`);
@@ -597,10 +616,6 @@ export async function updateSetupStatus(
 
 /**
  * Get a single setup by ID
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {String} setupId - Setup ID
- * @returns {Object} The setup configuration
  */
 export async function getSetupById(mobileNumber, spaceId, setupId) {
   try {
@@ -621,7 +636,6 @@ export async function getSetupById(mobileNumber, spaceId, setupId) {
       throw new Error("Setup not found");
     }
 
-    // Find device names
     const conditionDevice = space.devices.find(
       (device) => device.device_id === setup.condition.device_id
     );
@@ -646,14 +660,14 @@ export async function getSetupById(mobileNumber, spaceId, setupId) {
       actions: cleanActions,
     };
 
-    // Add device-type specific fields
     if (setup.condition.device_type === "base") {
       conditionResponse.status = setup.condition.status;
       conditionResponse.switch_no = setup.condition.switch_no || "BM1";
     } else if (setup.condition.device_type === "tank") {
       conditionResponse.level = setup.condition.level;
-      conditionResponse.minimum = setup.condition.minimum;
-      conditionResponse.maximum = setup.condition.maximum;
+      conditionResponse.trigger = setup.condition.trigger;
+      conditionResponse.stop = setup.condition.stop;
+      conditionResponse.slot = setup.condition.slot;
       conditionResponse.operator = setup.condition.operator;
     }
 
@@ -677,9 +691,6 @@ export async function getSetupById(mobileNumber, spaceId, setupId) {
 
 /**
  * Get all setups for a space
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @returns {Array} Array of setup configurations
  */
 export async function getSetups(mobileNumber, spaceId) {
   try {
@@ -691,18 +702,12 @@ export async function getSetups(mobileNumber, spaceId) {
       throw new Error("User not found");
     }
 
-    logger.info(`User found with ${user.spaces?.length || 0} spaces`);
-
     const space = user.spaces.find((space) => space._id.toString() === spaceId);
     if (!space) {
       logger.error(`Space not found for spaceId: ${spaceId}`);
-      logger.info(`Available spaces: ${user.spaces.map(s => s._id.toString()).join(', ')}`);
       throw new Error("Space not found");
     }
 
-    logger.info(`Space found with ${space.setups?.length || 0} setups and ${space.devices?.length || 0} devices`);
-
-    // ✅ FIX: Handle case when setups array doesn't exist or is empty
     const setups = space.setups || [];
     const devices = space.devices || [];
 
@@ -711,51 +716,33 @@ export async function getSetups(mobileNumber, spaceId) {
       return [];
     }
 
-    // Map and clean up the setups data
     const cleanSetups = setups.map((setup, index) => {
       try {
-        logger.info(`Processing setup ${index + 1}: ${setup._id}`);
-        
-        // ✅ FIX: Add null checks for setup properties
         if (!setup.condition) {
           logger.warn(`Setup ${setup._id} has no condition data`);
           return null;
         }
 
-        // Find device names with null checks
         const conditionDevice = devices.find(
           (device) => device && device.device_id === setup.condition.device_id
         );
 
-        if (!conditionDevice) {
-          logger.warn(`Condition device ${setup.condition.device_id} not found in space devices`);
-        }
-
-        // ✅ FIX: Add null checks for actions
         const cleanActions = (setup.condition.actions || []).map((action) => {
-          if (!action) {
-            logger.warn(`Null action found in setup ${setup._id}`);
-            return null;
-          }
+          if (!action) return null;
 
           const actionDevice = devices.find(
             (device) => device && device.device_id === action.device_id
           );
-          
-          if (!actionDevice) {
-            logger.warn(`Action device ${action.device_id} not found in space devices`);
-          }
 
           return {
             device_id: action.device_id,
             device_name: actionDevice?.device_name || "Unknown Device",
-            switch_no: action.switch_no || "BM1", // Default fallback
+            switch_no: action.switch_no || "BM1",
             set_status: action.set_status,
             delay: action.delay || 0,
           };
-        }).filter(action => action !== null); // Remove null actions
+        }).filter(action => action !== null);
 
-        // Handle condition response with proper null checks
         const conditionResponse = {
           device_id: setup.condition.device_id,
           device_name: conditionDevice?.device_name || "Unknown Device",
@@ -763,18 +750,17 @@ export async function getSetups(mobileNumber, spaceId) {
           actions: cleanActions,
         };
 
-        // Add device-type specific fields
         if (setup.condition.device_type === "base") {
           conditionResponse.status = setup.condition.status;
-          conditionResponse.switch_no = setup.condition.switch_no || "BM1"; // Default fallback
+          conditionResponse.switch_no = setup.condition.switch_no || "BM1";
         } else if (setup.condition.device_type === "tank") {
           conditionResponse.level = setup.condition.level;
-          conditionResponse.minimum = setup.condition.minimum;
-          conditionResponse.maximum = setup.condition.maximum;
+          conditionResponse.trigger = setup.condition.trigger;
+          conditionResponse.stop = setup.condition.stop;
+          conditionResponse.slot = setup.condition.slot;
           conditionResponse.operator = setup.condition.operator;
         }
 
-        // Return cleaned setup object
         return {
           id: setup._id?.toString() || `temp_${index}`,
           name: setup.name || `Setup ${index + 1}`,
@@ -788,7 +774,7 @@ export async function getSetups(mobileNumber, spaceId) {
         logger.error(`Error processing setup ${setup._id}: ${setupError.message}`);
         return null;
       }
-    }).filter(setup => setup !== null); // Remove null setups
+    }).filter(setup => setup !== null);
 
     logger.info(`Successfully processed ${cleanSetups.length} setups for space ${spaceId}`);
     return cleanSetups;
@@ -797,12 +783,9 @@ export async function getSetups(mobileNumber, spaceId) {
     throw error;
   }
 }
+
 /**
  * Delete a setup configuration
- * @param {String} mobileNumber - User's mobile number
- * @param {String} spaceId - Space ID
- * @param {String} setupId - Setup ID
- * @returns {Object} Success message
  */
 export async function deleteSetup(mobileNumber, spaceId, setupId) {
   try {
@@ -818,7 +801,6 @@ export async function deleteSetup(mobileNumber, spaceId, setupId) {
       throw new Error("Space not found");
     }
 
-    // Find the setup to delete
     const setupIndex = user.spaces[spaceIndex].setups?.findIndex(
       (setup) => setup._id.toString() === setupId
     );
@@ -827,13 +809,10 @@ export async function deleteSetup(mobileNumber, spaceId, setupId) {
       throw new Error("Setup not found");
     }
 
-    // Remove the setup
     user.spaces[spaceIndex].setups.splice(setupIndex, 1);
-
-    // ✅ CRITICAL FIX: Save the updated user document
     await user.save();
 
-    logger.info(`Setup deleted: ${setupId} and changes saved to DB`);
+    logger.info(`Setup deleted: ${setupId}`);
     return { success: true, message: "Setup deleted successfully" };
   } catch (error) {
     logger.error(`Error deleting setup: ${error.message}`);

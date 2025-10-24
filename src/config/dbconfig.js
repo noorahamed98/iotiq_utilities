@@ -24,17 +24,22 @@ const actionSchema = new mongoose.Schema({
     required: [true, "Device ID for action is required"],
   },
   switch_no: {
-  type: String,
-  enum: ["BM1", "BM2"],
-  required: function () {
-    return this.device_type === "base";
-  }
-},
+    type: String,
+    enum: ["BM1", "BM2"],
+    required: function () {
+      return this.device_type === "base";
+    }
+  },
   set_status: {
     type: String,
     required: [true, "Status value for action is required"],
     enum: ["on", "off"],
   },
+  delay: {
+    type: Number,
+    default: 0,
+    min: 0
+  }
 });
 
 const conditionSchema = new mongoose.Schema({
@@ -55,12 +60,12 @@ const conditionSchema = new mongoose.Schema({
     },
   },
   switch_no: {
-  type: String,
-  enum: ["BM1", "BM2"],
-  required: function () {
-    return this.device_type === "base";
-  }
-},
+    type: String,
+    enum: ["BM1", "BM2"],
+    required: function () {
+      return this.device_type === "base";
+    }
+  },
   level: {
     type: Number,
     min: 0,
@@ -78,12 +83,13 @@ const conditionSchema = new mongoose.Schema({
       message: "Tank level threshold must be between 0 and 100",
     },
   },
-  minimum: {
+  // NEW: Trigger value (replaces minimum)
+  trigger: {
     type: Number,
     min: 0,
     max: 100,
     required: function() {
-      return this.device_type === "tank"; // Only required for tank devices
+      return this.device_type === "tank";
     },
     default: function() {
       return this.device_type === "tank" ? 20 : undefined;
@@ -95,15 +101,16 @@ const conditionSchema = new mongoose.Schema({
         }
         return true;
       },
-      message: "Minimum value must be between 0 and 100"
+      message: "Trigger value must be between 0 and 100"
     }
   },
-   maximum: {
+  // NEW: Stop value (replaces maximum)
+  stop: {
     type: Number,
     min: 0,
     max: 100,
     required: function() {
-      return this.device_type === "tank"; // Only required for tank devices
+      return this.device_type === "tank";
     },
     default: function() {
       return this.device_type === "tank" ? 90 : undefined;
@@ -111,27 +118,44 @@ const conditionSchema = new mongoose.Schema({
     validate: {
       validator: function(value) {
         if (this.device_type === "tank") {
-          const minValue = this.minimum;
-          return value >= 0 && value <= 100 && (!minValue || value > minValue);
+          const triggerValue = this.trigger;
+          return value >= 0 && value <= 100 && (!triggerValue || value > triggerValue);
         }
         return true;
       },
-      message: "Maximum value must be between 0 and 100 and greater than minimum"
+      message: "Stop value must be between 0 and 100 and greater than trigger"
     }
   },
-
+  // NEW: Slot field for tank devices
+  slot: {
+    type: String,
+    enum: ["Primary1", "Primary2", "Secondary"],
+    required: function() {
+      return this.device_type === "tank";
+    },
+    validate: {
+      validator: function(value) {
+        if (this.device_type === "tank") {
+          return ["Primary1", "Primary2", "Secondary"].includes(value);
+        }
+        return true;
+      },
+      message: "Slot must be 'Primary1', 'Primary2', or 'Secondary' for tank devices"
+    }
+  },
   operator: {
     type: String,
     enum: ["<", ">", "<=", ">=", "=="],
     required: function() {
-      return this.device_type === "tank"; // Only required for tank devices
+      return this.device_type === "tank";
     },
+    default: "<",
     validate: {
       validator: function(value) {
         if (this.device_type === "tank") {
           return ["<", ">", "<=", ">=", "=="].includes(value);
         }
-        return true; // Skip validation for base devices
+        return true;
       },
       message: "Valid operator is required for tank devices"
     }
@@ -157,11 +181,13 @@ const setupSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-  
   updated_at: {
     type: Date,
     default: Date.now,
   },
+  last_triggered: {
+    type: Date
+  }
 });
 
 // Device Schema - Updated with properties for IoT integration

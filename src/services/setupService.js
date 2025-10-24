@@ -336,33 +336,34 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     const savedSpace = savedUser.spaces.find(s => s._id.toString() === spaceId);
     const savedSetup = savedSpace.setups.find(s => s._id.toString() === newSetup._id.toString());
 
+    // Convert to plain object for manipulation
+    const enrichedSetup = savedSetup.toObject();
+
     // Enrich actions with action codes, device_type, and device_number
-    if (savedSetup.condition.actions) {
-      savedSetup.condition.actions = savedSetup.condition.actions.map(action => {
-        const actionObj = action.toObject();
-        
+    if (enrichedSetup.condition.actions) {
+      enrichedSetup.condition.actions = enrichedSetup.condition.actions.map(action => {
         // Generate action code
         const actionCode = convertActionToCode(action, space.devices);
         if (actionCode) {
-          actionObj.action_code = actionCode;
+          action.action_code = actionCode;
         }
 
         // Add device_type
         if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
-          actionObj.device_type = "VC";
+          action.device_type = "VC";
         } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
-          actionObj.device_type = "MC";
+          action.device_type = "MC";
         } else {
-          actionObj.device_type = "base";
+          action.device_type = "base";
         }
 
         // Add device_number
         const deviceNumberMatch = action.device_id.match(/\d+/);
         if (deviceNumberMatch) {
-          actionObj.device_number = deviceNumberMatch[0];
+          action.device_number = deviceNumberMatch[0];
         }
 
-        return actionObj;
+        return action;
       });
     }
 
@@ -371,10 +372,9 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       if (setupData.condition.device_type === "tank") {
         // Convert actions to action codes (A1, A2, A3)
         const actionCodes = {};
-        setupData.condition.actions.forEach((action, index) => {
-          const actionCode = convertActionToCode(action, space.devices);
-          if (actionCode) {
-            actionCodes[`A${index + 1}`] = actionCode;
+        enrichedSetup.condition.actions.forEach((action, index) => {
+          if (action.action_code) {
+            actionCodes[`A${index + 1}`] = action.action_code;
           }
         });
 
@@ -419,7 +419,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     }
 
     logger.info(`Setup created successfully for space ${spaceId}`);
-    return savedSetup;
+    return enrichedSetup;
   } catch (error) {
     logger.error(`Error creating setup: ${error.message}`);
     throw error;
@@ -553,30 +553,31 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
     const updatedSpace = updatedUser.spaces.find(s => s._id.toString() === spaceId);
     const updatedSetup = updatedSpace.setups.find(s => s._id.toString() === setupId);
 
+    // Convert to plain object for manipulation
+    const enrichedSetup = updatedSetup.toObject();
+
     // Enrich actions with action codes
-    if (updatedSetup.condition.actions) {
-      updatedSetup.condition.actions = updatedSetup.condition.actions.map(action => {
-        const actionObj = action.toObject();
-        
+    if (enrichedSetup.condition.actions) {
+      enrichedSetup.condition.actions = enrichedSetup.condition.actions.map(action => {
         const actionCode = convertActionToCode(action, space.devices);
         if (actionCode) {
-          actionObj.action_code = actionCode;
+          action.action_code = actionCode;
         }
 
         if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
-          actionObj.device_type = "VC";
+          action.device_type = "VC";
         } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
-          actionObj.device_type = "MC";
+          action.device_type = "MC";
         } else {
-          actionObj.device_type = "base";
+          action.device_type = "base";
         }
 
         const deviceNumberMatch = action.device_id.match(/\d+/);
         if (deviceNumberMatch) {
-          actionObj.device_number = deviceNumberMatch[0];
+          action.device_number = deviceNumberMatch[0];
         }
 
-        return actionObj;
+        return action;
       });
     }
 

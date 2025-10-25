@@ -62,26 +62,31 @@ function convertActionToCode(action, devices) {
       return null;
     }
 
-    // Extract device type prefix (MC, VC, etc.)
-    let deviceType = "MC"; // Default to Motor Controller
-    if (action.device_id.includes("VC") || action.device_id.includes("VALVE")) {
-      deviceType = "VC";
-    } else if (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) {
-      deviceType = "MC";
-    }
-
-    // Extract device number from device_id (e.g., "MC1" -> "1")
-    const deviceNumberMatch = action.device_id.match(/\d+/);
-    const deviceNumber = deviceNumberMatch ? deviceNumberMatch[0] : "1";
-
-    // Extract switch number from switch_no (BM1 -> S1, BM2 -> S2)
+    const status = (action.set_status || "").toString().toUpperCase();
     const switchNumber = action.switch_no === "BM2" ? "2" : "1";
 
-    // Convert status to uppercase
-    const status = action.set_status.toUpperCase();
+    // If the action device is a base module use BM0 as the module prefix
+    if (actionDevice.device_type === "base") {
+      // Example: BM0S1ON
+      return `BM0S${switchNumber}${status}`;
+    }
 
-    // Build action code: MC1S1ON, VC2S2OFF, etc.
-    return `${deviceType}${deviceNumber}S${switchNumber}${status}`;
+    // For MC/VC or other module types keep previous format (e.g., MC1S1ON, VC2S2OFF)
+    let deviceTypePrefix = "BASE";
+    if ((actionDevice.device_type || action.device_id).toString().includes("VC") || (actionDevice.device_type || "").toString().toUpperCase().includes("VC") || action.device_id.includes("VALVE")) {
+      deviceTypePrefix = "VC";
+    } else if ((actionDevice.device_type || action.device_id).toString().includes("MC") || (actionDevice.device_type || "").toString().toUpperCase().includes("MC") || action.device_id.includes("MOTOR")) {
+      deviceTypePrefix = "MC";
+    } else {
+      // Fallback: try to extract alpha prefix from device_id
+      const alphaMatch = (action.device_id || "").match(/^[A-Za-z]+/);
+      deviceTypePrefix = alphaMatch ? alphaMatch[0].toUpperCase() : "DEV";
+    }
+
+    const deviceNumberMatch = action.device_id ? action.device_id.match(/\d+/) : null;
+    const deviceNumber = deviceNumberMatch ? deviceNumberMatch[0] : "1";
+
+    return `${deviceTypePrefix}${deviceNumber}S${switchNumber}${status}`;
   } catch (error) {
     logger.error(`Error converting action to code: ${error.message}`);
     return null;
@@ -180,23 +185,28 @@ async function autoControlBaseDevices(condition, space) {
  */
 async function publishSetting(deviceId, payload) {
   try {
-    const thingid = await getThingIdByDeviceId(deviceId);
-    if (!thingid) {
-      throw new Error(`No thingid found for deviceid: ${deviceId}`);
-    }
+    const mqttPayload = {
+      deviceid: deviceId,
+      sensor_no: "TM1", // Example sensor number
+      slot: payload.slot,
+      Stop: payload.stop,
+      Trigger: payload.trigger,
+      ...payload.actions.reduce((acc, action, index) => {
+        acc[`A${index + 1}`] = action.action_code; // e.g., A1: "BM0S1OFF"
+        return acc;
+      }, {})
+    };
 
-    const topic = `mqtt/device/${thingid}/setting`;
-    const finalPayload = JSON.stringify(payload);
+    const topic = `mqtt/device/${deviceId}/setting`;
+    await iotData.publish({
+      topic,
+      payload: JSON.stringify(mqttPayload),
+      qos: 1
+    }).promise();
 
-    await iotData
-      .publish({ topic, payload: finalPayload, qos: 0 })
-      .promise();
-
-    logger.info(`✅ Settings published to topic: ${topic}`, { deviceId, thingid });
-    return { success: true, topic };
+    logger.info(`Published setting to ${topic}:`, mqttPayload);
   } catch (error) {
-    logger.error("❌ Settings publish error:", error);
-    throw new Error(`MQTT Publish Failed: ${error.message}`);
+    logger.error(`Error publishing setting: ${error.message}`);
   }
 }
 
@@ -388,8 +398,12 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           ...actionCodes // Add A1, A2, A3, etc.
         };
 
-        // Publish setting
-        await publishSetting(conditionDevice.device_id, mqttPayload);
+        // Publish setting - use base device thing id when available
+        // Find a base device that owns the sensor (match slave_name) or fallback to tank device
+        const baseDeviceForSensor = (space.devices || []).find(d => d.device_type === "base" && d.slave_name && conditionDevice.slave_name && d.slave_name === conditionDevice.slave_name);
+        const publishDeviceId = baseDeviceForSensor ? baseDeviceForSensor.device_id : conditionDevice.device_id;
+
+        await publishSetting(publishDeviceId, mqttPayload);
         logger.info(`✅ Setting published for tank device ${conditionDevice.device_id}`, { mqttPayload });
         
       } else if (setupData.condition.device_type === "base") {
@@ -418,11 +432,36 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
       logger.error(`MQTT publishing failed, but setup was saved to DB: ${mqttError.message}`);
     }
 
-    logger.info(`Setup created successfully for space ${spaceId}`);
-    return enrichedSetup;
+    // Construct the response object
+    const response = {
+      success: true,
+      data: {
+        name: setupData.name,
+        description: setupData.description,
+        active: setupData.active,
+        condition: {
+          device_id: setupData.condition.device_id,
+          device_type: setupData.condition.device_type,
+          level: setupData.condition.level,
+          trigger: setupData.condition.trigger,
+          stop: setupData.condition.stop,
+          slot: setupData.condition.slot,
+          operator: setupData.condition.operator,
+        }
+      }
+    };
+
+    // Add action codes as individual keys (A1, A2, A3, etc.)
+    setupData.condition.actions.forEach((action, index) => {
+      const actionCode = convertActionToCode(action, space.devices);
+      response.data.condition[`A${index + 1}`] = actionCode; // e.g., A1: "BM0S1OFF"
+    });
+
+    // Return the response
+    return response;
   } catch (error) {
     logger.error(`Error creating setup: ${error.message}`);
-    throw error;
+    return { success: false, message: error.message };
   }
 }
 
@@ -712,15 +751,27 @@ export async function getSetupById(mobileNumber, spaceId, setupId) {
       const actionDevice = space.devices.find(
         (device) => device.device_id === action.device_id
       );
+
+      // Enrich action with device_type, device_number and action_code
+      const deviceType = action.device_id.includes("VC") || action.device_id.includes("VALVE") ? "VC" :
+                         (action.device_id.includes("MC") || action.device_id.includes("MOTOR")) ? "MC" : "base";
+      const deviceNumberMatch = action.device_id.match(/\d+/);
+      const deviceNumber = deviceNumberMatch ? deviceNumberMatch[0] : undefined;
+      const actionCode = convertActionToCode(action, space.devices);
+
       return {
+        _id: action._id,
         device_id: action.device_id,
         device_name: actionDevice?.device_name || "Unknown Device",
+        device_type: deviceType,
+        device_number: deviceNumber,
         switch_no: action.switch_no || "BM1",
         set_status: action.set_status,
         delay: action.delay || 0,
+        action_code: actionCode || undefined
       };
     });
-
+    
     const conditionResponse = {
       device_id: setup.condition.device_id,
       device_name: conditionDevice?.device_name || "Unknown Device",
@@ -802,12 +853,22 @@ export async function getSetups(mobileNumber, spaceId) {
             (device) => device && device.device_id === action.device_id
           );
 
+          // Enrich action with device_type, device_number and action_code
+          const deviceType = action.device_id && (action.device_id.includes("VC") || action.device_id.includes("VALVE")) ? "VC" :
+                             (action.device_id && (action.device_id.includes("MC") || action.device_id.includes("MOTOR"))) ? "MC" : "base";
+          const deviceNumberMatch = action.device_id ? action.device_id.match(/\d+/) : null;
+          const deviceNumber = deviceNumberMatch ? deviceNumberMatch[0] : undefined;
+          const actionCode = convertActionToCode(action, devices);
+
           return {
             device_id: action.device_id,
             device_name: actionDevice?.device_name || "Unknown Device",
+            device_type: deviceType,
+            device_number: deviceNumber,
             switch_no: action.switch_no || "BM1",
             set_status: action.set_status,
             delay: action.delay || 0,
+            action_code: actionCode || undefined
           };
         }).filter(action => action !== null);
 
@@ -843,7 +904,7 @@ export async function getSetups(mobileNumber, spaceId) {
         return null;
       }
     }).filter(setup => setup !== null);
-
+    
     logger.info(`Successfully processed ${cleanSetups.length} setups for space ${spaceId}`);
     return cleanSetups;
   } catch (error) {

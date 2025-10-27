@@ -62,7 +62,7 @@ export async function getThingIdByDeviceId(deviceid) {
  * Poll the device_responses collection in MongoDB for a matching thingid
  * Returns the document or null on timeout
  */
-export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 10000) {
+export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 15000) {
   const database = db();
   const coll = database.collection("device_responses");
   const interval = 500;

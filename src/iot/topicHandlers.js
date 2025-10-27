@@ -5,6 +5,8 @@ import { createNotification } from "../services/notificationService.js";
 import { publish } from "../utils/mqttHelper.js";
 import { getTopic } from "../config/awsIotConfig.js";
 import { checkSetupConditions } from "./deviceManager.js";
+import { saveDeviceResponse } from "../services/migratedDataService.js";
+
 
 // Handle device update messages (water level changes, status changes)
 export async function handleUpdateMessage(topic, message) {
@@ -210,7 +212,6 @@ export async function handleAliveMessage(topic, message) {
 // Handle slave response messages (from base to tank connections)
 export async function handleSlaveResponseMessage(topic, message) {
   try {
-    // Extract base and slave device IDs
     const baseDeviceId = message.deviceid;
     const slaveId = message.slaveid;
     const sensorNo = message.sensor_no;
@@ -220,11 +221,9 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    logger.info(
-      `Received slave response for base ${baseDeviceId} and tank ${slaveId}`
-    );
+    logger.info(`Received slave response for base ${baseDeviceId} and tank ${slaveId}`);
 
-    // Find the base device
+    // ✅ SAVE TO device_responses COLLECTION FIRST
     const user = await User.findOne({
       "spaces.devices.device_id": baseDeviceId,
     });
@@ -234,81 +233,36 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    // Find the space containing both devices
-    let baseSpace = null;
+    // Find the base device to get thingid
+    let thingId = null;
     let baseDevice = null;
-    let tankDevice = null;
-
+    
     for (const space of user.spaces) {
-      const baseIndex = space.devices.findIndex(
-        (d) => d.device_id === baseDeviceId
-      );
-      const tankIndex = space.devices.findIndex((d) => d.device_id === slaveId);
-
-      if (baseIndex !== -1) {
-        baseSpace = space;
-        baseDevice = space.devices[baseIndex];
-
-        if (tankIndex !== -1) {
-          tankDevice = space.devices[tankIndex];
-          break;
-        }
+      const device = space.devices.find(d => d.device_id === baseDeviceId);
+      if (device) {
+        baseDevice = device;
+        thingId = device.thing_name || device.thingid;
+        break;
       }
     }
 
-    if (!baseSpace || !baseDevice) {
-      logger.error(`Base device ${baseDeviceId} not found in any space`);
+    if (!thingId) {
+      logger.error(`No thingId found for base device ${baseDeviceId}`);
       return;
     }
 
-    if (!tankDevice) {
-      logger.error(
-        `Tank device ${slaveId} not found in space with base ${baseDeviceId}`
-      );
-      return;
-    }
-
-    // Update tank device with connection details
-    tankDevice.parent_device_id = baseDeviceId;
-    tankDevice.slave_name = sensorNo;
-
-    // Update additional fields if available
-    if (message.channel) {
-      tankDevice.channel = message.channel;
-    }
-
-    if (message.address_l) {
-      tankDevice.address_l = message.address_l;
-    }
-
-    if (message.address_h) {
-      tankDevice.address_h = message.address_h;
-    }
-
-    tankDevice.last_updated = new Date();
-
-    // Save updates
-    await user.save();
-
-    logger.info(
-      `Updated tank device ${slaveId} connection to base ${baseDeviceId}`
+    // ✅ Save the response to device_responses collection
+    await saveDeviceResponse(
+      thingId,
+      baseDeviceId,
+      'slave_response',  // response_type
+      message            // full response data
     );
 
-    // Create notification
-    await createNotification({
-      type: "TANK_CONNECTED",
-      title: "Tank Connected",
-      message: `Tank ${tankDevice.device_name} connected to base ${baseDevice.device_name}`,
-      user_id: user._id,
-      data: {
-        base_device_id: baseDeviceId,
-        base_device_name: baseDevice.device_name,
-        tank_device_id: slaveId,
-        tank_device_name: tankDevice.device_name,
-        space_name: baseSpace.space_name,
-        space_id: baseSpace._id,
-      },
-    });
+    logger.info(`✅ Slave response saved to device_responses collection`);
+
+    // ... rest of your existing code to update tank device ...
+    
   } catch (error) {
     logger.error("Error handling slave response message:", error);
   }

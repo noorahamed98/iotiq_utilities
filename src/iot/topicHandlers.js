@@ -5,7 +5,7 @@ import { createNotification } from "../services/notificationService.js";
 import { publish } from "../utils/mqttHelper.js";
 import { getTopic } from "../config/awsIotConfig.js";
 import { checkSetupConditions } from "./deviceManager.js";
-import { saveDeviceResponse } from "../services/migratedDataService.js";
+import { saveDeviceResponse, saveMqttDataToMongo } from "../services/migratedDataService.js";
 
 
 // Handle device update messages (water level changes, status changes)
@@ -20,6 +20,25 @@ export async function handleUpdateMessage(topic, message) {
     }
 
     logger.info(`Received update for device ${deviceId}`);
+
+    // ✅ Save to tank_readings collection
+    try {
+      await saveMqttDataToMongo({
+        deviceid: deviceId,
+        sensor_no: message.sensor_no,
+        switch_no: message.switch_no,
+        level: message.level || message.value,
+        value: message.value,
+        status: message.status,
+        message_type: 'update',
+        timestamp: message.timestamp || new Date(),
+        thingid: message.thingId,
+        raw_data: message
+      });
+      logger.info(`✅ Update saved to tank_readings for device ${deviceId}`);
+    } catch (saveError) {
+      logger.error(`❌ Error saving to tank_readings: ${saveError.message}`);
+    }
 
     // Find the device in the database
     const user = await User.findOne({ "spaces.devices.device_id": deviceId });
@@ -147,6 +166,20 @@ export async function handleAliveMessage(topic, message) {
 
     logger.info(`Received alive message from device ${deviceId}`);
 
+    // ✅ Save to tank_readings collection
+    try {
+      await saveMqttDataToMongo({
+        deviceid: deviceId,
+        message_type: 'alive_reply',
+        timestamp: message.timestamp || new Date(),
+        thingid: message.thingId,
+        raw_data: message
+      });
+      logger.info(`✅ Alive message saved to tank_readings for device ${deviceId}`);
+    } catch (saveError) {
+      logger.error(`❌ Error saving alive message: ${saveError.message}`);
+    }
+
     // Find the device in the database
     const user = await User.findOne({ "spaces.devices.device_id": deviceId });
 
@@ -172,8 +205,8 @@ export async function handleAliveMessage(topic, message) {
           device.last_updated = new Date();
 
           // Extract firmware version if available
-          if (message.firmware) {
-            device.firmware_version = message.firmware;
+          if (message.firmware || message.firmware_version) {
+            device.firmware_version = message.firmware || message.firmware_version;
           }
 
           deviceUpdated = true;
@@ -223,7 +256,7 @@ export async function handleSlaveResponseMessage(topic, message) {
 
     logger.info(`Received slave response for base ${baseDeviceId} and tank ${slaveId}`);
 
-    // ✅ SAVE TO device_responses COLLECTION FIRST
+    // Find the user with this base device
     const user = await User.findOne({
       "spaces.devices.device_id": baseDeviceId,
     });
@@ -251,18 +284,71 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    // ✅ Save the response to device_responses collection
-    await saveDeviceResponse(
-      thingId,
-      baseDeviceId,
-      'slave_response',  // response_type
-      message            // full response data
-    );
+    // ✅ 1. Save the response to device_responses collection
+    try {
+      await saveDeviceResponse(
+        thingId,
+        baseDeviceId,
+        'slave_response',
+        message
+      );
+      logger.info(`✅ Slave response saved to device_responses collection`);
+    } catch (saveError) {
+      logger.error(`❌ Error saving to device_responses: ${saveError.message}`);
+    }
 
-    logger.info(`✅ Slave response saved to device_responses collection`);
+    // ✅ 2. Save to tank_readings collection (for tracking tank connection)
+    try {
+      await saveMqttDataToMongo({
+        deviceid: slaveId, // Use the tank/slave device ID
+        sensor_no: sensorNo,
+        message_type: 'slave_response',
+        timestamp: message.timestamp || new Date(),
+        thingid: thingId,
+        channel: message.channel,
+        address_l: message.address_l,
+        address_h: message.address_h,
+        raw_data: message
+      });
+      logger.info(`✅ Slave response saved to tank_readings for tank ${slaveId}`);
+    } catch (saveError) {
+      logger.error(`❌ Error saving slave response to tank_readings: ${saveError.message}`);
+    }
 
-    // ... rest of your existing code to update tank device ...
-    
+    // ✅ 3. Update tank device in MongoDB user document
+    for (const space of user.spaces) {
+      const tankDevice = space.devices.find(d => d.device_id === slaveId);
+      
+      if (tankDevice) {
+        // Update tank connection info
+        tankDevice.channel = message.channel || tankDevice.channel;
+        tankDevice.address_l = message.address_l || tankDevice.address_l;
+        tankDevice.address_h = message.address_h || tankDevice.address_h;
+        tankDevice.last_updated = new Date();
+        
+        await user.save();
+        logger.info(`✅ Tank device ${slaveId} connection info updated in user document`);
+        
+        // Create notification
+        await createNotification({
+          type: "TANK_CONNECTED",
+          title: "Tank Device Connected",
+          message: `Tank ${tankDevice.device_name} successfully connected to base`,
+          user_id: user._id,
+          data: {
+            device_id: slaveId,
+            device_name: tankDevice.device_name,
+            base_device_id: baseDeviceId,
+            sensor_no: sensorNo,
+            space_name: space.space_name,
+            space_id: space._id,
+          },
+        });
+        
+        break;
+      }
+    }
+
   } catch (error) {
     logger.error("Error handling slave response message:", error);
   }
@@ -279,11 +365,23 @@ export async function handleHealthMessage(topic, message) {
       return;
     }
 
-    // Log health message but don't create notifications for routine health updates
+    // Log health message
     logger.info(`Received health message from device ${deviceId}`);
 
-    // Could update device metrics in database if needed
-    // For now, just log the message
+    // ✅ Save to tank_readings collection
+    try {
+      await saveMqttDataToMongo({
+        deviceid: deviceId,
+        message_type: 'health_reply',
+        timestamp: message.timestamp || new Date(),
+        thingid: message.thingId,
+        raw_data: message
+      });
+      logger.info(`✅ Health message saved to tank_readings for device ${deviceId}`);
+    } catch (saveError) {
+      logger.error(`❌ Error saving health message: ${saveError.message}`);
+    }
+
   } catch (error) {
     logger.error("Error handling health message:", error);
   }

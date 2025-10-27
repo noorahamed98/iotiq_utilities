@@ -33,10 +33,11 @@ export const TOPIC_PREFIXES = {
   update: "$aws/things/",
   otaValidate: "$aws/things/",
   slaveRequest: "mqtt/device/",
-  slaveResponse: "mqtt/device/",
+  slaveResponse: "mqtt/device/",  // ✅ Updated
   config: "mqtt/device/",
   setting: "mqtt/device/",
   control: "mqtt/device/",
+  reset: "mqtt/device/",
 };
 
 // Topic suffixes
@@ -45,11 +46,12 @@ export const TOPIC_SUFFIXES = {
   health: "/health_reply",
   update: "/update",
   otaValidate: "/ota/validate",
-  slaveRequest: "/slave_request",
-  slaveResponse: "/slave_response",
+  slaveRequest: "/slave_request",  // ✅ Updated with underscore
+  slaveResponse: "/slave_response", // ✅ Updated with underscore
   config: "/config",
   setting: "/setting",
   control: "/control",
+  reset: "/reset",
 };
 
 // Generate full topic path

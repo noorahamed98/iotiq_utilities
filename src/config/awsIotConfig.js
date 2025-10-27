@@ -33,7 +33,7 @@ export const TOPIC_PREFIXES = {
   update: "$aws/things/",
   otaValidate: "$aws/things/",
   slaveRequest: "mqtt/device/",
-  slaveResponse: "mqtt/device/",  // ✅ Updated
+  slaveResponse: "$aws/things/",  // ✅ FIXED: Device publishes to $aws/things/
   config: "mqtt/device/",
   setting: "mqtt/device/",
   control: "mqtt/device/",

@@ -66,8 +66,8 @@ export async function initializeIotService() {
       const healthTopic = getTopic("health", thingName, "health");
       subscribe(healthTopic);
 
-      // ✅ Subscribe to slave_response (with underscore) - for base devices
-      const slaveResponseTopic = `mqtt/device/${thingName}/slave_response`;
+      // ✅ Subscribe to slave_response - FIXED to use correct $aws/things/ prefix
+      const slaveResponseTopic = getTopic("slaveResponse", thingName, "slaveResponse");
       subscribe(slaveResponseTopic);
       
       logger.info(`Subscribed to topics for device ${thingName}`);
@@ -92,8 +92,8 @@ export async function initializeIotService() {
           handleAliveMessage(topic, data);
         } else if (topic.endsWith(TOPIC_SUFFIXES.health)) {
           handleHealthMessage(topic, data);
-        } else if (topic.endsWith("/slave_response")) {
-          // ✅ Check for slave_response with underscore
+        } else if (topic.endsWith(TOPIC_SUFFIXES.slaveResponse)) {
+          // ✅ FIXED: Now properly detects $aws/things/{thingId}/slave_response
           handleSlaveResponseMessage(topic, data);
         } else {
           logger.info(`Received message on unhandled topic ${topic}`);
@@ -126,8 +126,8 @@ export function subscribeToDeviceTopics(thingName) {
     const aliveTopic = getTopic("alive", thingName, "alive");
     const healthTopic = getTopic("health", thingName, "health");
     
-    // ✅ Use correct slave_response topic with underscore
-    const slaveResponseTopic = `mqtt/device/${thingName}/slave_response`;
+    // ✅ FIXED: Use correct $aws/things/ prefix for slave_response
+    const slaveResponseTopic = getTopic("slaveResponse", thingName, "slaveResponse");
 
     subscribe(updateTopic);
     subscribe(aliveTopic);

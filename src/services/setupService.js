@@ -182,31 +182,30 @@ async function autoControlBaseDevices(condition, space) {
 
 /**
  * Publish setting to MQTT
+ * @param {string} deviceId - The device ID to get thing ID for
+ * @param {object} mqttPayload - The complete MQTT payload to publish
  */
-async function publishSetting(deviceId, payload) {
+async function publishSetting(deviceId, mqttPayload) {
   try {
-    const mqttPayload = {
-      deviceid: deviceId,
-      sensor_no: "TM1", // Example sensor number
-      slot: payload.slot,
-      Stop: payload.stop,
-      Trigger: payload.trigger,
-      ...payload.actions.reduce((acc, action, index) => {
-        acc[`A${index + 1}`] = action.action_code; // e.g., A1: "BM0S1OFF"
-        return acc;
-      }, {})
-    };
+    // Get the thing ID for the device
+    const thingId = await getThingIdByDeviceId(deviceId);
+    if (!thingId) {
+      logger.error(`No thingId found for device: ${deviceId}`);
+      throw new Error(`No thingId found for device: ${deviceId}`);
+    }
 
-    const topic = `mqtt/device/${deviceId}/setting`;
+    const topic = `mqtt/device/${thingId}/setting`;
+    
     await iotData.publish({
       topic,
       payload: JSON.stringify(mqttPayload),
       qos: 1
     }).promise();
 
-    logger.info(`Published setting to ${topic}:`, mqttPayload);
+    logger.info(`✅ Published setting to ${topic}:`, mqttPayload);
   } catch (error) {
     logger.error(`Error publishing setting: ${error.message}`);
+    throw error;
   }
 }
 
@@ -380,6 +379,22 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     // Handle MQTT operations
     try {
       if (setupData.condition.device_type === "tank") {
+        // Find the base device that owns this sensor
+        // Match by slave_name or use first base device as fallback
+        const baseDeviceForSensor = (space.devices || []).find(d => 
+          d.device_type === "base" && 
+          d.slave_name && 
+          conditionDevice.slave_name && 
+          d.slave_name === conditionDevice.slave_name
+        );
+        
+        // If no matching base device found, use the first base device in the space
+        const baseDevice = baseDeviceForSensor || (space.devices || []).find(d => d.device_type === "base");
+        
+        if (!baseDevice) {
+          throw new Error("No base device found in this space to publish sensor settings");
+        }
+
         // Convert actions to action codes (A1, A2, A3)
         const actionCodes = {};
         enrichedSetup.condition.actions.forEach((action, index) => {
@@ -388,23 +403,19 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
           }
         });
 
-        // Build NEW MQTT payload format
+        // Build MQTT payload with BASE device ID
         const mqttPayload = {
-          deviceid: conditionDevice.device_id,
-          sensor_no: conditionDevice.slave_name || "TM1",
+          deviceid: baseDevice.device_id,  // BASE DEVICE ID (e.g., "IOTIQBM_A0525001")
+          sensor_no: conditionDevice.slave_name || setupData.condition.sensor_no || "TM1",
           slot: setupData.condition.slot,
           Trigger: setupData.condition.trigger.toString(),
           Stop: setupData.condition.stop.toString(),
-          ...actionCodes // Add A1, A2, A3, etc.
+          ...actionCodes // A1, A2, A3, etc.
         };
 
-        // Publish setting - use base device thing id when available
-        // Find a base device that owns the sensor (match slave_name) or fallback to tank device
-        const baseDeviceForSensor = (space.devices || []).find(d => d.device_type === "base" && d.slave_name && conditionDevice.slave_name && d.slave_name === conditionDevice.slave_name);
-        const publishDeviceId = baseDeviceForSensor ? baseDeviceForSensor.device_id : conditionDevice.device_id;
-
-        await publishSetting(publishDeviceId, mqttPayload);
-        logger.info(`✅ Setting published for tank device ${conditionDevice.device_id}`, { mqttPayload });
+        // Publish using BASE device ID to get its thing ID
+        await publishSetting(baseDevice.device_id, mqttPayload);
+        logger.info(`✅ Setting published for tank sensor ${conditionDevice.device_id} via base device ${baseDevice.device_id}`, { mqttPayload });
         
       } else if (setupData.condition.device_type === "base") {
         const mqttPayload = {
@@ -436,6 +447,7 @@ export async function createSetup(mobileNumber, spaceId, setupData) {
     const response = {
       success: true,
       data: {
+        setup_id: newSetup._id.toString(),
         name: setupData.name,
         description: setupData.description,
         active: setupData.active,
@@ -628,6 +640,20 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
         );
 
         if (setupData.condition.device_type === "tank") {
+          // Find the base device that owns this sensor
+          const baseDeviceForSensor = (space.devices || []).find(d => 
+            d.device_type === "base" && 
+            d.slave_name && 
+            conditionDevice.slave_name && 
+            d.slave_name === conditionDevice.slave_name
+          );
+          
+          const baseDevice = baseDeviceForSensor || (space.devices || []).find(d => d.device_type === "base");
+          
+          if (!baseDevice) {
+            throw new Error("No base device found in this space to publish sensor settings");
+          }
+
           // Convert actions to action codes
           const actionCodes = {};
           setupData.condition.actions.forEach((action, index) => {
@@ -637,27 +663,27 @@ export async function updateSetup(mobileNumber, spaceId, setupId, setupData) {
             }
           });
 
-          // Build NEW MQTT payload format
+          // Build MQTT payload with BASE device ID
           const mqttPayload = {
-            deviceid: conditionDevice.device_id,
-            sensor_no: conditionDevice.slave_name || "TM1",
+            deviceid: baseDevice.device_id,
+            sensor_no: conditionDevice.slave_name || setupData.condition.sensor_no || "TM1",
             slot: setupData.condition.slot,
             Trigger: setupData.condition.trigger.toString(),
             Stop: setupData.condition.stop.toString(),
             ...actionCodes
           };
 
-          await publishSetting(conditionDevice.device_id, mqttPayload);
-          logger.info(`✅ Setting updated for tank device ${conditionDevice.device_id}`, { mqttPayload });
+          await publishSetting(baseDevice.device_id, mqttPayload);
+          logger.info(`✅ Setting updated for tank device ${conditionDevice.device_id} via base device ${baseDevice.device_id}`, { mqttPayload });
           
         } else if (setupData.condition.device_type === "base") {
-          const updatedSetup = user.spaces[spaceIndex].setups[setupIndex];
+          const finalSetup = user.spaces[spaceIndex].setups[setupIndex];
           const mqttPayload = {
             deviceid: setupData.condition.device_id,
             switch_no: setupData.condition.switch_no,
             status: setupData.condition.status,
-            setup_id: updatedSetup._id.toString(),
-            setup_name: updatedSetup.name,
+            setup_id: finalSetup._id.toString(),
+            setup_name: finalSetup.name,
             actions: setupData.condition.actions.map(action => ({
               device_id: action.device_id,
               switch_no: action.switch_no,

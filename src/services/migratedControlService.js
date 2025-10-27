@@ -62,28 +62,34 @@ export async function getThingIdByDeviceId(deviceid) {
  * Poll the device_responses collection in MongoDB for a matching thingid
  * Returns the document or null on timeout
  */
-export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 5000) {
+export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 10000) {
   const database = db();
   const coll = database.collection("device_responses");
   const interval = 500;
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
-    const since = new Date(Date.now() - 10000); // 10 seconds window
-    
+    const since = new Date(Date.now() - 10000); // 10s window
+
     try {
       const doc = await coll.findOne(
-        { 
-          thingid, 
+        {
+          thingid,
           inserted_at: { $gte: since },
-          response_type: 'slave_response'
+          $or: [
+            { response_type: 'slave_response' },
+            { response_type: 'slave-resp' },
+            { response_type: { $regex: /^slave/i } },
+            { 'response_data.type': { $regex: /slave/i } },
+            { 'response_data.response_type': { $regex: /slave/i } }
+          ]
         },
         { sort: { inserted_at: -1 } }
       );
-      
+
       if (doc) {
         logger.info(`✅ Slave response found for thingid: ${thingid}`);
-        return sanitizeMongoDoc(doc);
+        return doc;
       }
     } catch (err) {
       logger.error(`Error polling slave response: ${err.message}`);

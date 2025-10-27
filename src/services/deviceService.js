@@ -4,7 +4,13 @@ import { getMqttClient, publish } from "../utils/mqttHelper.js";
 import { getTopic } from "../config/awsIotConfig.js";
 import logger from "../utils/logger.js";
 import { trace, context } from '@opentelemetry/api';
+import AWS from "aws-sdk";
 
+// Initialize AWS IoT Data client
+const iotData = new AWS.IotData({
+  endpoint: process.env.IOT_ENDPOINT,
+  region: process.env.AWS_REGION || "ap-south-1",
+});
 
 // Helper function to check if device exists globally
 async function checkDeviceExistsGlobally(deviceId, thingName = null) {
@@ -296,9 +302,6 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
   }
 }
 
-
-
-
 // Add a tank device to a space and connect to base device
 // Updated addTankDevice function in deviceService.js
 // Updated addTankDevice function in deviceService.js
@@ -459,11 +462,28 @@ export async function addTankDevice(
         }
 
         // Publish MQTT message
-        publish(slaveRequestTopic, slaveRequestMessage);
-        logger.info("✅ Published MQTT Slave Request", {
-          topic: slaveRequestTopic,
-          message: slaveRequestMessage,
-        });
+        try {
+          await iotData.publish({
+            topic: slaveRequestTopic,
+            payload: JSON.stringify(slaveRequestMessage),
+            qos: 0
+          }).promise();
+
+          logger.info("✅ Published MQTT Slave Request via AWS IoT", {
+            topic: slaveRequestTopic,
+            message: slaveRequestMessage,
+          });
+        } catch (awsErr) {
+          logger.warn("AWS IoT publish failed, falling back to mqttHelper.publish", {
+            error: awsErr.message,
+            topic: slaveRequestTopic
+          });
+          publish(slaveRequestTopic, slaveRequestMessage);
+          logger.info("✅ Published MQTT Slave Request via mqttHelper", {
+            topic: slaveRequestTopic,
+            message: slaveRequestMessage,
+          });
+        }
       } catch (mqttError) {
         logger.error(
           `❌ Error sending MQTT slave request: ${mqttError.message}`

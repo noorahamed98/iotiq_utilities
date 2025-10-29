@@ -1,4 +1,4 @@
-// src/iot/topicHandlers.js
+// src/iot/topicHandlers.js - FIXED VERSION
 import logger from "../utils/logger.js";
 import { User } from "../config/dbconfig.js";
 import { createNotification } from "../services/notificationService.js";
@@ -242,7 +242,7 @@ export async function handleAliveMessage(topic, message) {
   }
 }
 
-// Handle slave response messages (from base to tank connections)
+// 🔥 FIXED: Handle slave response messages and REQUEST STATUS UPDATE
 export async function handleSlaveResponseMessage(topic, message) {
   try {
     const baseDeviceId = message.deviceid;
@@ -254,7 +254,7 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    logger.info(`Received slave response for base ${baseDeviceId} and tank ${slaveId}`);
+    logger.info(`🔵 Received slave response for base ${baseDeviceId} and tank ${slaveId}`);
 
     // Find the user with this base device
     const user = await User.findOne({
@@ -347,6 +347,28 @@ export async function handleSlaveResponseMessage(topic, message) {
         
         break;
       }
+    }
+
+    // 🔥 4. REQUEST STATUS UPDATE FROM THE TANK DEVICE
+    // This triggers the device to publish actual sensor readings to update topic
+    logger.info(`🚀 Requesting status update for tank ${slaveId} via sensor ${sensorNo}`);
+    
+    try {
+      const statusRequestTopic = `mqtt/device/${thingId}/status_request`;
+      const statusRequestPayload = {
+        deviceid: baseDeviceId,
+        sensor_no: sensorNo,  // Request specific sensor data
+        requested_at: new Date().toISOString()
+      };
+      
+      // Publish status request
+      publish(statusRequestTopic, statusRequestPayload);
+      
+      logger.info(`✅ Status request sent to ${statusRequestTopic}`);
+      logger.info(`⏳ Waiting for update topic with actual sensor readings...`);
+      
+    } catch (publishError) {
+      logger.error(`❌ Error publishing status request: ${publishError.message}`);
     }
 
   } catch (error) {

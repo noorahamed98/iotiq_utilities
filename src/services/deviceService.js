@@ -652,6 +652,28 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
           "Cannot delete base device with connected tank devices. Please remove the tank devices first."
         );
       }
+
+      // ✅ Publish reset topic for base device
+      if (device.thing_name) {
+        try {
+          const resetTopic = getTopic("reset", device.thing_name, "reset");
+          const resetMessage = {
+            deviceid: device.device_id,
+            sensor_no: device.switch_no || "BM1", // Base device switch number
+            slaveid: device.device_id // Reset entire device by setting slaveid to device_id
+          };
+
+          await safePublish(resetTopic, resetMessage);
+          logger.info("✅ Published MQTT Reset for base device", { 
+            topic: resetTopic, 
+            message: resetMessage 
+          });
+        } catch (mqttErr) {
+          logger.error(`⚠️ Error publishing reset for base device ${deviceId}: ${mqttErr.message}`);
+        }
+      } else {
+        logger.warn(`⚠️ Base device ${deviceId} has no thing_name, skipping MQTT reset`);
+      }
     }
 
     // --- 🧠 CASE 2: Tank device deletion ---
@@ -665,22 +687,25 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
 
       if (baseDevice && baseDevice.thing_name) {
         try {
-          const topic = getTopic("slaveDelete", baseDevice.thing_name, "slaveDelete");
-          const message = {
-            deviceid: baseDevice.device_id,
-            sensor_no: device.slave_name,
-            slaveid: device.device_id,
-            action: "delete"
+          // ✅ Changed to reset topic
+          const resetTopic = getTopic("reset", baseDevice.thing_name, "reset");
+          const resetMessage = {
+            deviceid: baseDevice.device_id, // Parent base device ID
+            sensor_no: device.slave_name,    // Tank's slave name (TM1, TM2, TM3, TM4)
+            slaveid: device.device_id        // Tank device ID to reset
           };
 
-          await publishToIoT(topic, message);
-          logger.info("✅ Published MQTT Slave Delete", { topic, message });
+          await safePublish(resetTopic, resetMessage);
+          logger.info("✅ Published MQTT Reset for tank device", { 
+            topic: resetTopic, 
+            message: resetMessage 
+          });
         } catch (mqttErr) {
-          logger.error(`⚠️ Error publishing MQTT delete for tank ${deviceId}: ${mqttErr.message}`);
+          logger.error(`⚠️ Error publishing reset for tank ${deviceId}: ${mqttErr.message}`);
         }
       } else {
         logger.warn(
-          `⚠️ Skipping MQTT cleanup — base device ${device.parent_device_id} has no thing_name`
+          `⚠️ Skipping MQTT reset – base device ${device.parent_device_id} has no thing_name`
         );
       }
     }

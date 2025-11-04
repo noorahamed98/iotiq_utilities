@@ -746,6 +746,8 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
       `✅ Deleted device: ${device.device_id} (${device.device_type}) from space ${space.space_name}`
     );
 
+    logger.info("✅ Removed device from setups");
+
     return {
       success: true,
       message: `Device '${device.device_name}' (${device.device_type}) deleted successfully.`,

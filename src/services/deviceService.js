@@ -435,8 +435,8 @@ export async function addTankDevice(
     // Default fields for non-Wi-Fi tanks
     if (tankData.connection_type === "without_wifi") {
       tankData.channel = tankData.channel || "24";
-      tankData.address_l = tankData.address_l || "0x01";
-      tankData.address_h = tankData.address_h || "0x01";
+      tankData.addl = tankData.addl || "0x01";
+      tankData.addh = tankData.addh || "0x01";
       tankData.range = tankData.range || 100;
       tankData.capacity = tankData.capacity || 1000;
     }
@@ -467,8 +467,8 @@ export async function addTankDevice(
             ...slaveRequestMessage,
             mode: 3,
             channel: parseInt(tankData.channel) || 24,
-            address_l: tankData.address_l,
-            address_h: tankData.address_h,
+            addl: tankData.addl,
+            addh: tankData.addh,
             range: parseInt(tankData.range) || 100,
             capacity: parseInt(tankData.capacity) || 1000,
           };

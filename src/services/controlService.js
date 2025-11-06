@@ -83,7 +83,7 @@ export async function slaveRequest(req, res) {
   });
 
   try {
-    const { deviceid, sensor_no, mode, channel, address_l, address_h, range, capacity, slaveid } = req.body;
+    const { deviceid, sensor_no, mode, channel, addl, addh, range, capacity, slaveid } = req.body;
     
     if (!deviceid || !sensor_no) {
       return res.status(400).json({ 
@@ -114,8 +114,8 @@ export async function slaveRequest(req, res) {
       sensor_no,
       mode: parseInt(mode) || 3,
       channel: parseInt(channel),
-      address_l,
-      address_h,
+      addl,
+      addh,
       range: parseInt(range),
       capacity: parseInt(capacity)
     };
@@ -163,8 +163,8 @@ export async function slaveRequest(req, res) {
           channel: response.response_data?.channel 
             ? parseInt(response.response_data.channel) 
             : parseInt(channel),
-          address_l: response.response_data?.address_l || address_l,
-          address_h: response.response_data?.address_h || address_h,
+          addl: response.response_data?.addl || addl,
+          addh: response.response_data?.addh || addh,
           sensor_no: response.response_data?.sensor_no || sensor_no,
           slaveid: response.response_data?.slaveid || slaveid,
           timestamp: response.inserted_at || response.completed_at || response.requested_at

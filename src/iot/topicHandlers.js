@@ -299,8 +299,8 @@ export async function handleSlaveResponseMessage(topic, message) {
         timestamp: message.timestamp || new Date(),
         thingid: thingId,
         channel: message.channel,
-        address_l: message.address_l,
-        address_h: message.address_h,
+        addl: message.addl,
+        addh: message.addh,
         raw_data: message
       });
       logger.info(`✅ Slave response saved to tank_readings`);
@@ -314,8 +314,8 @@ export async function handleSlaveResponseMessage(topic, message) {
       
       if (tankDevice) {
         tankDevice.channel = message.channel || tankDevice.channel;
-        tankDevice.address_l = message.address_l || tankDevice.address_l;
-        tankDevice.address_h = message.address_h || tankDevice.address_h;
+        tankDevice.addl = message.addl || tankDevice.addl;
+        tankDevice.addh = message.addh || tankDevice.addh;
         tankDevice.last_updated = new Date();
         
         await user.save();

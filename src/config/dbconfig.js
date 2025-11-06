@@ -314,7 +314,7 @@ const deviceSchema = new mongoose.Schema(
         );
       },
     },
-    address_l: {
+    addl: {
       type: String,
       required: function () {
         return (
@@ -322,7 +322,7 @@ const deviceSchema = new mongoose.Schema(
         );
       },
     },
-    address_h: {
+    addh: {
       type: String,
       required: function () {
         return (

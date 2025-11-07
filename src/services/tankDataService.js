@@ -1,4 +1,4 @@
-// src/services/tankDataService.js
+// src/services/tankDataService.js - FIXED FOR TANK DATA
 import { getLatestSensorData, getLatestSwitchStatus, TankReading } from './migratedDataService.js';
 import { publishToIoT } from '../utils/mqttHelper.js';
 import { getTopic } from '../config/awsIotConfig.js';
@@ -6,11 +6,13 @@ import { User } from '../config/dbconfig.js';
 import logger from '../utils/logger.js';
 
 /**
- * Fetch latest tank sensor data from MongoDB
- * ✅ UPDATED: Now also publishes update request to trigger fresh data
+ * ✅ FIXED: Fetch latest tank sensor data from MongoDB
+ * This endpoint is called with the BASE device ID and sensor number
  */
 export async function sensorData(req, res) {
   const { deviceid, sensorNumber } = req.params;
+
+  logger.info(`📊 sensorData API called with deviceid: ${deviceid}, sensorNumber: ${sensorNumber}`);
 
   if (!deviceid || !sensorNumber) {
     return res.status(400).json({
@@ -20,51 +22,69 @@ export async function sensorData(req, res) {
   }
 
   try {
-    // 🔥 NEW: Find the device and publish update request
+    // Find the device to determine if it's a base or tank device
     const user = await User.findOne({
       "spaces.devices.device_id": deviceid
     });
+
+    let baseDeviceId = deviceid;
+    let thingName = null;
 
     if (user) {
       for (const space of user.spaces) {
         const device = space.devices.find(d => d.device_id === deviceid);
         
         if (device) {
-          // Found the device, now publish update request
+          logger.info(`✅ Found device:`, {
+            device_id: device.device_id,
+            device_type: device.device_type,
+            sensor_no: sensorNumber
+          });
+
+          // If it's a tank device, find its parent base device
           if (device.device_type === "tank") {
-            // For tank devices, find the parent base device
+            baseDeviceId = device.parent_device_id;
+            logger.info(`📌 Tank device detected, using parent base device: ${baseDeviceId}`);
+            
+            // Find parent device for thing_name
             const parentDevice = space.devices.find(d => 
               d.device_id === device.parent_device_id && 
               d.switch_no === device.parent_switch_no
             );
             
             if (parentDevice?.thing_name) {
+              thingName = parentDevice.thing_name;
+              
+              // Publish update request to get fresh data
               try {
-                const updateTopic = getTopic("update", parentDevice.thing_name, "update");
+                const updateTopic = getTopic("update", thingName, "update");
                 const updateMsg = {
-                  deviceid: device.parent_device_id,
+                  deviceid: baseDeviceId,
                   device: "tank",
-                  sensor_no: sensorNumber, // Use the sensorNumber from params
+                  sensor_no: sensorNumber,
                   slaveid: deviceid,
                   switch_no: device.parent_switch_no,
-                  request_type: "poll" // Indicate this is a polling request
+                  request_type: "poll"
                 };
                 
                 await publishToIoT(updateTopic, updateMsg);
-                logger.info(`📤 Published update request for tank ${deviceid} via base ${parentDevice.device_id}`, updateMsg);
+                logger.info(`📤 Published update request for tank ${deviceid}`, updateMsg);
               } catch (publishError) {
-                logger.error(`Error publishing update request: ${publishError.message}`);
-                // Continue to fetch data even if publish fails
+                logger.error(`⚠️ Error publishing update request: ${publishError.message}`);
               }
             }
-          } else if (device.device_type === "base" && device.thing_name) {
-            // For base devices
+          } 
+          // If it's a base device
+          else if (device.device_type === "base" && device.thing_name) {
+            thingName = device.thing_name;
+            
+            // Publish update request
             try {
-              const updateTopic = getTopic("update", device.thing_name, "update");
+              const updateTopic = getTopic("update", thingName, "update");
               const updateMsg = {
                 deviceid: deviceid,
                 device: "base",
-                switch_no: sensorNumber, // For base, sensorNumber is switch_no
+                switch_no: sensorNumber,
                 status: device.status || "off",
                 sensor_no: sensorNumber,
                 value: device.status === "on" ? "1" : "0",
@@ -74,39 +94,55 @@ export async function sensorData(req, res) {
               await publishToIoT(updateTopic, updateMsg);
               logger.info(`📤 Published update request for base ${deviceid}`, updateMsg);
             } catch (publishError) {
-              logger.error(`Error publishing update request: ${publishError.message}`);
+              logger.error(`⚠️ Error publishing update request: ${publishError.message}`);
             }
           }
-          break; // Found device, no need to continue
+          break;
         }
       }
     }
 
-    // Fetch latest reading from MongoDB
-    const mongoResult = await getLatestSensorData(deviceid, sensorNumber);
+    // ✅ Query MongoDB using the BASE device ID + sensor number
+    logger.info(`🔍 Querying MongoDB with baseDeviceId: ${baseDeviceId}, sensorNumber: ${sensorNumber}`);
+    const mongoResult = await getLatestSensorData(baseDeviceId, sensorNumber);
 
     if (!mongoResult) {
+      logger.warn(`⚠️ No data found in MongoDB for base device ${baseDeviceId}, sensor ${sensorNumber}`);
+      
       return res.status(404).json({
         success: false,
         message: 'No data found for the given sensor.',
+        debug: {
+          queried_deviceid: baseDeviceId,
+          queried_sensor: sensorNumber,
+          original_deviceid: deviceid
+        }
       });
     }
 
+    // ✅ Format response
     const formattedResult = {
-      deviceid: mongoResult.deviceid,
+      deviceid: mongoResult.deviceid, // Base device ID
       sensor_no: mongoResult.sensor_no,
       switch_no: mongoResult.switch_no,
-      level: mongoResult.level,
+      level: mongoResult.level || mongoResult.value, // Use level if available, otherwise value
       value: mongoResult.value || mongoResult.level,
       status: mongoResult.status,
       message_type: mongoResult.message_type,
       timestamp: mongoResult.timestamp,
       thingid: mongoResult.thingid,
+      device_type: mongoResult.device_type
     };
 
-    res.json({ success: true, data: [formattedResult] });
+    logger.info(`✅ Returning sensor data:`, formattedResult);
+
+    res.json({ 
+      success: true, 
+      data: [formattedResult] 
+    });
+    
   } catch (error) {
-    logger.error('Error fetching latest sensor data:', error);
+    logger.error('❌ Error fetching latest sensor data:', error);
     res.status(500).json({
       success: false,
       error: 'Internal Server Error',
@@ -116,11 +152,12 @@ export async function sensorData(req, res) {
 }
 
 /**
- * Fetch latest switch status from MongoDB
- * ✅ UPDATED: Now also publishes update request to trigger fresh data
+ * ✅ FIXED: Fetch latest switch status from MongoDB
  */
 export async function switchStatus(req, res) {
   const { deviceid, switchNumber } = req.params;
+
+  logger.info(`📊 switchStatus API called with deviceid: ${deviceid}, switchNumber: ${switchNumber}`);
 
   if (!deviceid || !switchNumber) {
     return res.status(400).json({
@@ -130,7 +167,7 @@ export async function switchStatus(req, res) {
   }
 
   try {
-    // 🔥 NEW: Find the device and publish update request
+    // Find the device and publish update request
     const user = await User.findOne({
       "spaces.devices.device_id": deviceid
     });
@@ -158,7 +195,7 @@ export async function switchStatus(req, res) {
             await publishToIoT(updateTopic, updateMsg);
             logger.info(`📤 Published update request for switch ${deviceid}/${switchNumber}`, updateMsg);
           } catch (publishError) {
-            logger.error(`Error publishing update request: ${publishError.message}`);
+            logger.error(`⚠️ Error publishing update request: ${publishError.message}`);
           }
           break;
         }
@@ -166,9 +203,12 @@ export async function switchStatus(req, res) {
     }
 
     // Fetch latest switch status from MongoDB
+    logger.info(`🔍 Querying MongoDB for switch status: ${deviceid}/${switchNumber}`);
     const mongoResult = await getLatestSwitchStatus(deviceid, switchNumber);
 
     if (!mongoResult) {
+      logger.warn(`⚠️ No switch data found for ${deviceid}/${switchNumber}`);
+      
       return res.status(404).json({
         success: false,
         message: 'No data found for the given switch.',
@@ -180,14 +220,20 @@ export async function switchStatus(req, res) {
       sensor_no: mongoResult.sensor_no,
       switch_no: mongoResult.switch_no,
       value: mongoResult.value || mongoResult.level,
-      status: mongoResult.status === 'true' ? 'on' : 'off',
+      status: mongoResult.status === 'true' || mongoResult.status === 'on' ? 'on' : 'off',
       timestamp: mongoResult.timestamp,
       thingid: mongoResult.thingid,
     };
 
-    res.json({ success: true, data: [formattedResult] });
+    logger.info(`✅ Returning switch status:`, formattedResult);
+
+    res.json({ 
+      success: true, 
+      data: [formattedResult] 
+    });
+    
   } catch (error) {
-    logger.error('Error fetching latest switch data:', error);
+    logger.error('❌ Error fetching latest switch data:', error);
     res.status(500).json({
       success: false,
       error: 'Internal Server Error',
@@ -197,8 +243,7 @@ export async function switchStatus(req, res) {
 }
 
 /**
- * Handle IoT message forwarding through Lambda (optional helper)
- * Used if you want to notify IoT Core about changes or requests
+ * Handle IoT message forwarding through Lambda
  */
 export async function forwardToIoT(deviceid, messageType, payload) {
   try {
@@ -252,6 +297,8 @@ export async function getHistoricalData(req, res) {
   const { deviceid, sensorNumber } = req.params;
   const { startDate, endDate, limit = 1000 } = req.query;
 
+  logger.info(`📊 getHistoricalData called for ${deviceid}/${sensorNumber}`);
+
   if (!deviceid) {
     return res.status(400).json({
       success: false,
@@ -274,13 +321,15 @@ export async function getHistoricalData(req, res) {
       .limit(parseInt(limit))
       .lean();
 
+    logger.info(`✅ Found ${readings.length} historical records`);
+
     res.json({
       success: true,
       data: readings,
       count: readings.length,
     });
   } catch (error) {
-    logger.error('Error fetching historical data:', error);
+    logger.error('❌ Error fetching historical data:', error);
     res.status(500).json({
       success: false,
       error: 'Internal Server Error',

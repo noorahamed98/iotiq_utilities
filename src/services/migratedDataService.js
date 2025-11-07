@@ -1,372 +1,277 @@
-/**
- * Migrated Data Service - MongoDB Only
- * 
- * Provides methods to query device data from MongoDB collections
- */
+// src/services/migratedDataService.js - UPDATED with value > 0 filter
+import mongoose from "mongoose";
+import logger from "../utils/logger.js";
 
-import mongoose from 'mongoose';
-import logger from '../utils/logger.js';
+const db = () => mongoose.connection.db;
 
-// MongoDB Schemas for device data
+// Tank Reading Schema
 const tankReadingSchema = new mongoose.Schema({
-  deviceid: { type: String, required: true, index: true },
-  sensor_no: { type: String, index: true },
-  switch_no: { type: String, index: true },
-  level: { type: Number },
-  value: { type: Number },
-  status: { type: String },
-  message_type: { type: String, index: true },
-  timestamp: { type: Date, required: true, index: true },
-  thingid: { type: String, index: true },
-  raw_data: { type: mongoose.Schema.Types.Mixed },
-  migrated_at: { type: Date, default: Date.now }
-}, {
-  timestamps: true,
-  collection: 'tank_readings'
-});
+  deviceid: String,
+  parent_deviceid: String,
+  device_type: String,
+  sensor_no: String,
+  switch_no: String,
+  level: Number,
+  value: mongoose.Schema.Types.Mixed,
+  status: String,
+  message_type: String,
+  timestamp: { type: Date, default: Date.now },
+  thingid: String,
+  channel: String,
+  addl: String,
+  addh: String,
+  raw_data: mongoose.Schema.Types.Mixed
+}, { timestamps: true });
 
-const sensorMetadataSchema = new mongoose.Schema({
-  deviceid: { type: String, required: true, unique: true, index: true },
-  thingid: { type: String, required: true, index: true },
-  device_type: { type: String },
-  connection_info: { type: mongoose.Schema.Types.Mixed },
-  first_seen: { type: Date },
-  last_seen: { type: Date },
-  migrated_at: { type: Date, default: Date.now }
-}, {
-  timestamps: true,
-  collection: 'sensor_metadata'
-});
-
-const deviceResponseSchema = new mongoose.Schema({
-  thingid: { type: String, required: true, index: true },
-  deviceid: { type: String, index: true },
-  response_type: { type: String, index: true },
-  response_data: { type: mongoose.Schema.Types.Mixed },
-  inserted_at: { type: Date, required: true, index: true },
-  migrated_at: { type: Date, default: Date.now }
-}, {
-  timestamps: true,
-  collection: 'device_responses'
-});
-
-// Create models
-const TankReading = mongoose.model('TankReading', tankReadingSchema);
-const SensorMetadata = mongoose.model('SensorMetadata', sensorMetadataSchema);
-const DeviceResponse = mongoose.model('DeviceResponse', deviceResponseSchema);
+export const TankReading = mongoose.model("TankReading", tankReadingSchema, "tank_readings");
 
 /**
- * Save MQTT data to MongoDB
+ * ✅ UPDATED: Get latest sensor data with value > 0
+ * Returns the most recent document where value > 0
+ */
+export async function getLatestSensorData(deviceid, sensorNo) {
+  logger.info(`🔍 Getting latest sensor data (value > 0) for deviceid: ${deviceid}, sensor_no: ${sensorNo}`);
+  
+  try {
+    const database = db();
+    const collection = database.collection("tank_readings");
+    
+    // ✅ Query for the LAST document with value > 0
+    const query = {
+      deviceid: deviceid,
+      sensor_no: sensorNo,
+      message_type: "update",
+      $or: [
+        { value: { $gt: 0 } },  // value as number
+        { value: { $gt: "0" } } // value as string
+      ]
+    };
+    
+    logger.info(`🔍 Query (last value > 0):`, JSON.stringify(query, null, 2));
+    
+    const result = await collection.findOne(
+      query,
+      { 
+        sort: { timestamp: -1 }, // Most recent first
+        projection: {
+          deviceid: 1,
+          sensor_no: 1,
+          switch_no: 1,
+          level: 1,
+          value: 1,
+          status: 1,
+          message_type: 1,
+          timestamp: 1,
+          thingid: 1,
+          device_type: 1
+        }
+      }
+    );
+
+    if (result) {
+      logger.info(`✅ Found sensor data with value > 0:`, JSON.stringify(result, null, 2));
+      return result;
+    } else {
+      logger.warn(`⚠️ No sensor data found with value > 0 for deviceid: ${deviceid}, sensor_no: ${sensorNo}`);
+      
+      // Debug: Check what's in the database
+      const recentRecords = await collection.find(
+        { deviceid: deviceid, sensor_no: sensorNo },
+        { sort: { timestamp: -1 }, limit: 5 }
+      ).toArray();
+      
+      logger.info(`📊 Recent records for deviceid ${deviceid}, sensor ${sensorNo}:`, 
+        recentRecords.map(r => ({
+          sensor_no: r.sensor_no,
+          level: r.level,
+          value: r.value,
+          timestamp: r.timestamp,
+          message_type: r.message_type
+        }))
+      );
+      
+      return null;
+    }
+  } catch (error) {
+    logger.error(`❌ Error getting latest sensor data:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get latest switch status for a base device
+ */
+export async function getLatestSwitchStatus(deviceid, switchNo) {
+  logger.info(`🔍 Getting latest switch status for deviceid: ${deviceid}, switch_no: ${switchNo}`);
+  
+  try {
+    const database = db();
+    const collection = database.collection("tank_readings");
+    
+    const query = {
+      deviceid: deviceid,
+      $or: [
+        { switch_no: switchNo },
+        { sensor_no: switchNo }
+      ],
+      device_type: { $in: ["base", null] },
+      message_type: "update"
+    };
+    
+    logger.info(`🔍 Query:`, JSON.stringify(query, null, 2));
+    
+    const result = await collection.findOne(
+      query,
+      { 
+        sort: { timestamp: -1 },
+        projection: {
+          deviceid: 1,
+          sensor_no: 1,
+          switch_no: 1,
+          value: 1,
+          status: 1,
+          timestamp: 1,
+          thingid: 1
+        }
+      }
+    );
+
+    if (result) {
+      logger.info(`✅ Found switch status:`, JSON.stringify(result, null, 2));
+      return result;
+    } else {
+      logger.warn(`⚠️ No switch status found for deviceid: ${deviceid}, switch_no: ${switchNo}`);
+      return null;
+    }
+  } catch (error) {
+    logger.error(`❌ Error getting latest switch status:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Save MQTT data from topicHandlers
  */
 export async function saveMqttDataToMongo(data) {
   try {
-    const tankReading = new TankReading({
+    const database = db();
+    const collection = database.collection("tank_readings");
+    
+    const document = {
       deviceid: data.deviceid,
       sensor_no: data.sensor_no,
       switch_no: data.switch_no,
-      level: data.level || data.value,
+      level: data.level,
       value: data.value,
       status: data.status,
-      message_type: data.message_type || 'mqtt_update',
-      timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+      message_type: data.message_type,
+      timestamp: data.timestamp || new Date(),
       thingid: data.thingid,
-      raw_data: data
-    });
-
-    await tankReading.save();
-    logger.info(`✅ MQTT data saved to MongoDB for device ${data.deviceid}`);
-    return tankReading;
-  } catch (error) {
-    logger.error(`❌ Error saving MQTT data to MongoDB: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Get latest sensor data for a device
- */
-export async function getLatestSensorData(deviceId, sensorNumber) {
-  try {
-    const result = await TankReading.findOne({
-      deviceid: deviceId,
-      sensor_no: sensorNumber
-    })
-    .sort({ timestamp: -1 })
-    .lean();
-
-    return result;
-  } catch (error) {
-    logger.error('Error fetching latest sensor data from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get latest switch status for a device
- */
-export async function getLatestSwitchStatus(deviceId, switchNumber) {
-  try {
-    const result = await TankReading.findOne({
-      deviceid: deviceId,
-      switch_no: switchNumber,
-      status: { $ne: null }
-    })
-    .sort({ timestamp: -1 })
-    .lean();
-
-    return result;
-  } catch (error) {
-    logger.error('Error fetching latest switch status from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get historical sensor data for a device within a time range
- */
-export async function getHistoricalSensorData(deviceId, sensorNumber = null, startDate, endDate, limit = 1000) {
-  try {
-    const query = {
-      deviceid: deviceId,
-      timestamp: {
-        $gte: startDate,
-        $lte: endDate
-      }
+      channel: data.channel,
+      addl: data.addl,
+      addh: data.addh,
+      raw_data: data.raw_data
     };
-
-    if (sensorNumber) {
-      query.sensor_no = sensorNumber;
-    }
-
-    const results = await TankReading.find(query)
-      .sort({ timestamp: -1 })
-      .limit(limit)
-      .lean();
-
-    return results;
-  } catch (error) {
-    logger.error('Error fetching historical sensor data from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get sensor metadata by device ID
- */
-export async function getSensorMetadata(deviceId) {
-  try {
-    const result = await SensorMetadata.findOne({ deviceid: deviceId }).lean();
-    return result;
-  } catch (error) {
-    logger.error('Error fetching sensor metadata from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get thing ID for a device
- */
-export async function getThingIdByDeviceId(deviceId) {
-  try {
-    const result = await SensorMetadata.findOne({ deviceid: deviceId }, { thingid: 1 }).lean();
-    return result ? result.thingid : null;
-  } catch (error) {
-    logger.error('Error fetching thing ID from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get recent device responses
- */
-export async function getRecentDeviceResponses(thingId, seconds = 10) {
-  try {
-    const cutoffTime = new Date(Date.now() - (seconds * 1000));
     
-    const results = await DeviceResponse.find({
-      thingid: thingId,
-      inserted_at: { $gte: cutoffTime }
-    })
-    .sort({ inserted_at: -1 })
-    .lean();
-
-    return results;
-  } catch (error) {
-    logger.error('Error fetching recent device responses from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get tank data with specific message type and time range
- */
-export async function getTankDataByMessageType(deviceId, messageType, sensorNo = null, seconds = 10) {
-  try {
-    const cutoffTime = new Date(Date.now() - (seconds * 1000));
+    const result = await collection.insertOne(document);
+    logger.info(`✅ Saved MQTT data to tank_readings:`, result.insertedId);
     
-    const query = {
-      deviceid: deviceId,
-      message_type: messageType,
-      timestamp: { $gte: cutoffTime }
-    };
-
-    if (sensorNo) {
-      query.sensor_no = sensorNo;
-    }
-
-    const results = await TankReading.find(query)
-      .sort({ timestamp: -1 })
-      .lean();
-
-    return results;
-  } catch (error) {
-    logger.error('Error fetching tank data by message type from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get aggregated sensor statistics
- */
-export async function getSensorStatistics(deviceId, sensorNumber, startDate, endDate) {
-  try {
-    const pipeline = [
-      {
-        $match: {
-          deviceid: deviceId,
-          sensor_no: sensorNumber,
-          timestamp: { $gte: startDate, $lte: endDate },
-          level: { $ne: null }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          avgLevel: { $avg: '$level' },
-          minLevel: { $min: '$level' },
-          maxLevel: { $max: '$level' },
-          totalReadings: { $sum: 1 },
-          firstReading: { $min: '$timestamp' },
-          lastReading: { $max: '$timestamp' }
-        }
-      }
-    ];
-
-    const result = await TankReading.aggregate(pipeline);
-    return result[0] || null;
-  } catch (error) {
-    logger.error('Error fetching sensor statistics from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Search tank readings with flexible criteria
- */
-export async function searchTankReadings(criteria = {}, options = {}) {
-  try {
-    const {
-      sort = { timestamp: -1 },
-      limit = 100,
-      skip = 0
-    } = options;
-
-    const results = await TankReading.find(criteria)
-      .sort(sort)
-      .limit(limit)
-      .skip(skip)
-      .lean();
-
-    return results;
-  } catch (error) {
-    logger.error('Error searching tank readings from MongoDB:', error);
-    throw error;
-  }
-}
-
-/**
- * Get collection statistics
- */
-export async function getMigrationStatistics() {
-  try {
-    const tankReadingsCount = await TankReading.countDocuments();
-    const sensorMetadataCount = await SensorMetadata.countDocuments();
-    const deviceResponsesCount = await DeviceResponse.countDocuments();
-
-    // Get date ranges
-    const oldestTankReading = await TankReading.findOne({}, { timestamp: 1 }).sort({ timestamp: 1 });
-    const newestTankReading = await TankReading.findOne({}, { timestamp: 1 }).sort({ timestamp: -1 });
-
-    return {
-      collections: {
-        tank_readings: tankReadingsCount,
-        sensor_metadata: sensorMetadataCount,
-        device_responses: deviceResponsesCount
-      },
-      dateRange: {
-        oldest: oldestTankReading ? oldestTankReading.timestamp : null,
-        newest: newestTankReading ? newestTankReading.timestamp : null
-      }
-    };
-  } catch (error) {
-    logger.error('Error fetching migration statistics:', error);
-    throw error;
-  }
-}
-
-/**
- * Update or create sensor metadata
- */
-export async function upsertSensorMetadata(deviceId, thingId, deviceType, connectionInfo) {
-  try {
-    const result = await SensorMetadata.findOneAndUpdate(
-      { deviceid: deviceId },
-      {
-        $set: {
-          thingid: thingId,
-          device_type: deviceType,
-          connection_info: connectionInfo,
-          last_seen: new Date()
-        },
-        $setOnInsert: {
-          first_seen: new Date()
-        }
-      },
-      { upsert: true, new: true }
-    );
-
-    logger.info(`✅ Sensor metadata updated for device ${deviceId}`);
     return result;
   } catch (error) {
-    logger.error(`❌ Error upserting sensor metadata: ${error.message}`);
+    logger.error(`❌ Error saving MQTT data:`, error);
     throw error;
   }
 }
 
 /**
- * Save device response
+ * Save device response (for slave responses, etc.)
  */
-export async function saveDeviceResponse(thingId, deviceId, responseType, responseData) {
+export async function saveDeviceResponse(thingid, deviceid, responseType, responseData) {
   try {
-    const deviceResponse = new DeviceResponse({
-      thingid: thingId,
-      deviceid: deviceId,
+    const database = db();
+    const collection = database.collection("device_responses");
+    
+    const document = {
+      thingid: thingid,
+      deviceid: deviceid,
       response_type: responseType,
       response_data: responseData,
       inserted_at: new Date()
-    });
-
-    await deviceResponse.save();
-    logger.info(`✅ Device response saved for thingid ${thingId}`);
-    return deviceResponse;
+    };
+    
+    const result = await collection.insertOne(document);
+    logger.info(`✅ Saved device response:`, result.insertedId);
+    
+    return result;
   } catch (error) {
-    logger.error(`❌ Error saving device response: ${error.message}`);
+    logger.error(`❌ Error saving device response:`, error);
     throw error;
   }
 }
 
-export {
+/**
+ * Get historical sensor data with filters
+ */
+export async function getHistoricalSensorData(deviceid, sensorNo, startDate, endDate, limit = 1000) {
+  try {
+    const database = db();
+    const collection = database.collection("tank_readings");
+    
+    const query = {
+      deviceid: deviceid,
+      message_type: "update"
+    };
+    
+    if (sensorNo) {
+      query.sensor_no = sensorNo;
+    }
+    
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) query.timestamp.$gte = new Date(startDate);
+      if (endDate) query.timestamp.$lte = new Date(endDate);
+    }
+    
+    const results = await collection.find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+    
+    logger.info(`✅ Found ${results.length} historical records`);
+    return results;
+  } catch (error) {
+    logger.error(`❌ Error getting historical data:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get all sensor data for a device (for debugging)
+ */
+export async function getAllSensorDataForDevice(deviceid) {
+  try {
+    const database = db();
+    const collection = database.collection("tank_readings");
+    
+    const results = await collection.find({ deviceid: deviceid })
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .toArray();
+    
+    logger.info(`✅ Found ${results.length} total records for device ${deviceid}`);
+    return results;
+  } catch (error) {
+    logger.error(`❌ Error getting all sensor data:`, error);
+    throw error;
+  }
+}
+
+export default {
   TankReading,
-  SensorMetadata,
-  DeviceResponse
+  getLatestSensorData,
+  getLatestSwitchStatus,
+  saveMqttDataToMongo,
+  saveDeviceResponse,
+  getHistoricalSensorData,
+  getAllSensorDataForDevice
 };

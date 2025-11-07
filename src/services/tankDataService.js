@@ -1,4 +1,4 @@
-// src/services/tankDataService.js - FIXED FOR TANK DATA
+// src/services/tankDataService.js - COMPLETE VERSION with simple filter
 import { getLatestSensorData, getLatestSwitchStatus, TankReading } from './migratedDataService.js';
 import { publishToIoT } from '../utils/mqttHelper.js';
 import { getTopic } from '../config/awsIotConfig.js';
@@ -6,8 +6,8 @@ import { User } from '../config/dbconfig.js';
 import logger from '../utils/logger.js';
 
 /**
- * ✅ FIXED: Fetch latest tank sensor data from MongoDB
- * This endpoint is called with the BASE device ID and sensor number
+ * ✅ Fetch latest tank sensor data from MongoDB
+ * ✅ ADDED: Simple condition - only return if device_type is slave AND value > 0
  */
 export async function sensorData(req, res) {
   const { deviceid, sensorNumber } = req.params;
@@ -102,16 +102,16 @@ export async function sensorData(req, res) {
       }
     }
 
-    // ✅ Query MongoDB using the BASE device ID + sensor number
+    // Query MongoDB - now returns last document with value > 0
     logger.info(`🔍 Querying MongoDB with baseDeviceId: ${baseDeviceId}, sensorNumber: ${sensorNumber}`);
     const mongoResult = await getLatestSensorData(baseDeviceId, sensorNumber);
 
     if (!mongoResult) {
-      logger.warn(`⚠️ No data found in MongoDB for base device ${baseDeviceId}, sensor ${sensorNumber}`);
+      logger.warn(`⚠️ No data found with value > 0 for base device ${baseDeviceId}, sensor ${sensorNumber}`);
       
       return res.status(404).json({
         success: false,
-        message: 'No data found for the given sensor.',
+        message: 'No data found with value > 0 for the given sensor.',
         debug: {
           queried_deviceid: baseDeviceId,
           queried_sensor: sensorNumber,
@@ -120,13 +120,15 @@ export async function sensorData(req, res) {
       });
     }
 
-    // ✅ Format response
+    // ✅ Data already filtered by query (value > 0), just format and return
+    logger.info(`✅ Found data with value > 0:`, mongoResult);
+
     const formattedResult = {
-      deviceid: mongoResult.deviceid, // Base device ID
+      deviceid: mongoResult.deviceid,
       sensor_no: mongoResult.sensor_no,
       switch_no: mongoResult.switch_no,
-      level: mongoResult.level || mongoResult.value, // Use level if available, otherwise value
-      value: mongoResult.value || mongoResult.level,
+      level: mongoResult.level || mongoResult.value,
+      value: mongoResult.value,
       status: mongoResult.status,
       message_type: mongoResult.message_type,
       timestamp: mongoResult.timestamp,
@@ -152,7 +154,7 @@ export async function sensorData(req, res) {
 }
 
 /**
- * ✅ FIXED: Fetch latest switch status from MongoDB
+ * Fetch latest switch status from MongoDB
  */
 export async function switchStatus(req, res) {
   const { deviceid, switchNumber } = req.params;

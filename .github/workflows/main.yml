@@ -2,7 +2,9 @@ name: Deploy to IOT_UTILITY_SERVERMore actions
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
+  workflow_dispatch:
 
 jobs:
   deploy:
